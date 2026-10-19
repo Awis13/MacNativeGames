@@ -277,6 +277,17 @@ static void patch_output_res(Module *m){
    the phone's embedded code carries it only when TOTK_RENDER_RES was set for the export. The phone checks the embedded
    words and writes the size on the data page itself: its own TOTK_RENDER_RES, or the game's handheld 1280x720 when unset
    (the phone always reports handheld mode). Embedded code without the patch keeps the game's own size. */
+/* The game scales its scene with the canvas: the size it renders is the mode entry's (or the patched) size times the
+   output width over 1920, on both axes (measured: 2560x1440 asked on a 2560x1440 canvas rendered 3408x1920, 3440x1440 on
+   the 3440x1440 canvas 6160x2576). The data page therefore holds the asked size divided by that factor, rewritten when
+   key 3 changes the canvas, so the scene is the size asked for on every canvas. */
+static uint8_t *render_page;static unsigned render_w,render_h;
+static void render_res_publish(unsigned canvas_w){
+    if(!render_page)return;
+    float k=canvas_w>1920?canvas_w/1920.0f:1.0f,v[2]={render_w/k,render_h/k};
+    memcpy(render_page+16,v,sizeof v);
+    fprintf(stderr,"[totk] 1.4.3 render resolution: %ux%u on a %u-wide canvas (game size %.0fx%.0f, scaled by %.4f)\n",render_w,render_h,canvas_w,v[0],v[1],k);
+}
 static int render_res(unsigned *w,unsigned *h){
     const char *e=getenv("TOTK_RENDER_RES");
     if(!e||!*e||!strcmp(e,"0"))return 0;
@@ -317,8 +328,8 @@ static void patch_render_res(Module *m){
     }
     for(unsigned i=0;i<sizeof sites/sizeof *sites;i++)memcpy(m->base+sites[i].off,&want[i],4);
 #endif
-    float v[2]={(float)w,(float)h};
-    memcpy(m->base+data+16,v,sizeof v);
+    render_page=m->base+data;render_w=w;render_h=h;
+    render_res_publish(output_w?(unsigned)runtime_output_size_current():1920);
     fprintf(stderr,"[totk] 1.4.3 render resolution patch: scene render size %ux%u%s (4 instructions at main+0x585e48, value on the data page)\n",
             w,h,set?"":" (the game's handheld size; TOTK_RENDER_RES not set)");
 }
@@ -329,7 +340,7 @@ int runtime_output_res_toggle(void){
     atomic_store(size,full?pack_size(output_w,output_h):small_size());
     uint64_t config=atomic_load((_Atomic uint64_t *)(void *)(output_page+40));
     if(config){__atomic_fetch_or((uint32_t *)(uintptr_t)(config+8),1u<<21,__ATOMIC_SEQ_CST);runtime_oe_push_message(30);}
-    uint64_t now=atomic_load(size);fprintf(stderr,"[totk] 1.4.3 output requested %ux%u (display config %s)\n",(unsigned)now,(unsigned)(now>>32),config?"ready":"not published yet");
+    uint64_t now=atomic_load(size);render_res_publish((unsigned)now);fprintf(stderr,"[totk] 1.4.3 output requested %ux%u (display config %s)\n",(unsigned)now,(unsigned)(now>>32),config?"ready":"not published yet");
     return 1;
 }
 int runtime_output_mode_cycle(void){

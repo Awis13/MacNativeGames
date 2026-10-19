@@ -150,8 +150,9 @@ static void apply_settings(NSUserDefaults *d) {
         snprintf(patches, sizeof patches, "extracted/" TOTK_GAME_DIR "/romfs-patches%s%s", wide ? "-3440x1440" : "", xbox ? "-xbox" : "");
         put("TOTK_ROMFS_PATCHES", patches);
     }
-    /* The 3D size follows the canvas's shape: the same 900 / 1080 / 1440 lines, 21:9 wide on the ultrawide canvas. */
-    static const char *scenes[] = {"0", "1920x1080", "2560x1440"}, *wide_scenes[] = {"2150x900", "2580x1080", "3440x1440"};
+    /* The 3D size follows the canvas's shape: the same 900 / 1080 / 1440 lines, 21:9 wide on the ultrawide canvas. Native
+       is given explicitly too: left to itself the game scales its 1600 x 900 with the canvas width. */
+    static const char *scenes[] = {"1600x900", "1920x1080", "2560x1440"}, *wide_scenes[] = {"2150x900", "2580x1080", "3440x1440"};
     put("TOTK_RENDER_RES", (v[C_OUTPUT] == 2 ? wide_scenes : scenes)[v[C_SCENE]]);
     put("TOTK_MFX_UPSCALE", v[C_UPSCALE] == 0 ? "1" : "0");
     put("TOTK_MFX_OUTPUT", v[C_UPSCALE] == 0 ? "1" : "0");
