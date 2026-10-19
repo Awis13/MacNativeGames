@@ -37,9 +37,19 @@ static const Glyph FONT[] = {
     {' ', {0, 0, 0, 0, 0, 0, 0}},
 };
 
-static _Atomic int g_hints_visible = 1;
-int fps_overlay_hints_enabled(void) { return atomic_load_explicit(&g_hints_visible, memory_order_relaxed); }
-int fps_overlay_toggle_hints(void) { return !atomic_fetch_xor_explicit(&g_hints_visible, 1, memory_order_relaxed); }
+/* TOTK_HINTS=0: the shortcut panel and the on-screen readings start hidden (key 1 still toggles them). -1: not read yet. */
+static _Atomic int g_hints_visible = -1;
+static int hints_get(void) {
+    int v = atomic_load_explicit(&g_hints_visible, memory_order_relaxed);
+    if (v < 0) {
+        const char *e = getenv("TOTK_HINTS"); int want = !(e && !strcmp(e, "0")), unset = -1;
+        atomic_compare_exchange_strong(&g_hints_visible, &unset, want);
+        v = atomic_load_explicit(&g_hints_visible, memory_order_relaxed);
+    }
+    return v;
+}
+int fps_overlay_hints_enabled(void) { return hints_get(); }
+int fps_overlay_toggle_hints(void) { (void)hints_get(); return !atomic_fetch_xor_explicit(&g_hints_visible, 1, memory_order_relaxed); }
 
 int fps_overlay_enabled(void) {
     static int on = -1;
