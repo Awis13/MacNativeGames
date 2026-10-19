@@ -113,7 +113,7 @@ static void patch_realtime(Module *m){
 static void patch_dynres(Module *m){
     const char *e=getenv("TOTK_DYNRES");if(!e||strcmp(e,"0"))return;
 #if TARGET_OS_IPHONE
-    return;
+    (void)m;return;
 #else
     const Patch sites[]={{0x581a0c,0x1e270000,0x1e2e1000},{0x5821f8,0x1e200c20,0x1e2e1000}};
     for(unsigned i=0;i<2;i++){uint32_t word;memcpy(&word,m->base+sites[i].off,4);if(word!=sites[i].original)runtime_fail("1.4.3 dynamic resolution original instruction mismatch");}

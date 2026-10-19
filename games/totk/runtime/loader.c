@@ -234,8 +234,10 @@ static const char *plugin_dir,*plugin_dir_game;
    UltraCam 3.5.0 on 1.4.3: its camera patch at main+0x62882c removes a virtual call's function load (the call then lands
    in data at the first save load), its resolution hook at main+0x585da0 fights the runtime's own render resolution, and
    its NVN layer (in-game menu) leaves the picture black. */
+#if !TARGET_OS_IPHONE
 static const struct { const char *build, *restore, *detach; } plugin_rules[]={
  {"38ea2129009414362dba656e3125f7d4","main:62882c,main:585da0","nvnBootstrapLoader"}};
+#endif
 static char plugin_restore[512],plugin_detach[256];
 static void *plugin_thunk_shared(void *target,const char *name,int shared) {
  pthread_mutex_lock(&thunk_lock);
@@ -281,6 +283,7 @@ static void *plugin_import(const char *name) {
  if(!strcmp(name,"_ZN4sead7Vector3IfE4zeroE"))return (void *)vector3_zero;
  return NULL;
 }
+#if !TARGET_OS_IPHONE   /* plugins load on the Mac only */
 static uint64_t plugin_layout_key(const char *key) {
  char path[4096];need(snprintf(path,sizeof path,"%s/subsdk3.fixups.tsv",plugin_dir)<(int)sizeof path,"plugin path");
  FILE *f=fopen(path,"r");need(f!=NULL,"open plugin fixups.tsv");char line[256],k[64];unsigned long long v;
@@ -360,6 +363,7 @@ static void plugin_setup(void) {
  for(unsigned k=0;k<sizeof order/sizeof *order;k++)for(unsigned i=0;i<NM;i++)if(!strcmp(modules[i].name,order[k])){modules[i].place=at;at+=module_bytes(&modules[i]);}
  for(unsigned i=0;i<NM;i++)need(modules[i].place!=NULL,"module outside the Horizon order");
 }
+#endif
 /* The stand-in: header and MOD0 (empty dynamic table) in its code page, the module path in rodata, data zero. */
 static void map_rtld(Module *m) {
  m->size=m->file_size;m->base=mmap(m->place,m->size,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON|MAP_FIXED,-1,0);need(m->base!=MAP_FAILED,"map rtld");

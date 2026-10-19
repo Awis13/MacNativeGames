@@ -35,6 +35,9 @@ static inline kern_return_t mach_vm_remap(vm_map_t t, mach_vm_address_t *a, mach
     kern_return_t kr = vm_remap(t, &v, (vm_size_t)s, (vm_address_t)mask, f, src, (vm_address_t)src_a, copy, cur, max, inh);
     *a = v; return kr;
 }
+static inline kern_return_t mach_vm_protect(vm_map_t t, mach_vm_address_t a, mach_vm_size_t s, boolean_t set_max, vm_prot_t prot) {
+    return vm_protect(t, (vm_address_t)a, (vm_size_t)s, set_max, prot);
+}
 #else
 #include <mach/mach_vm.h>
 #endif
