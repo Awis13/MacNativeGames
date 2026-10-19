@@ -77,6 +77,16 @@ static void initialize_mouse(void){pthread_mutex_lock(&inputLock);mouseReady=tru
 static void initialize_keyboard(void){pthread_mutex_lock(&inputLock);keyboardReady=true;pthread_mutex_unlock(&inputLock);}
 static int mouse_states(MouseState *out,int max){if(max<=0)return 0;if(!out)runtime_fail("mouse output pointer");pthread_mutex_lock(&inputLock);if(!mouseReady)runtime_fail("mouse used before InitializeMouse");*out=(MouseState){.sampling=++sample};pthread_mutex_unlock(&inputLock);return 1;}
 static void keyboard_state(KeyboardState *out){if(!out)runtime_fail("keyboard output pointer");pthread_mutex_lock(&inputLock);if(!keyboardReady)runtime_fail("keyboard used before InitializeKeyboard");*out=(KeyboardState){.sampling=++sample};pthread_mutex_unlock(&inputLock);}
+/* Single-state reads and the touch screen, for an exlaunch plugin (TOTK_PLUGIN; the game itself reads state arrays).
+   TouchScreenState<5>: int64 sampling, int32 count, 4 bytes, 5 touches of 0x28 bytes; never touched here. */
+typedef struct{int64_t sampling;int32_t count,reserved;uint8_t touches[5][0x28];} TouchScreenState5;
+_Static_assert(sizeof(TouchScreenState5)==216,"touch screen ABI");
+static void initialize_touch_screen(void){}
+static void touch_screen_state(TouchScreenState5 *out){if(!out)runtime_fail("touch output pointer");pthread_mutex_lock(&inputLock);*out=(TouchScreenState5){.sampling=++sample};pthread_mutex_unlock(&inputLock);}
+static void mouse_state(MouseState *out){mouse_states(out,1);}
+static void full_state(NpadState *out,const uint32_t *id){full_states(out,1,id);}
+static void handheld_state(NpadState *out,const uint32_t *id){handheld_states(out,1,id);}
+static void disconnected_state(NpadState *out,const uint32_t *id){disconnected_states(out,1,id);}
 /* Controller support applet (the Switch's "connect controllers" screen). TOTK opens it in handheld mode; there is
    exactly one controller here, so it returns at once: one player, on the controller in use (ControllerSupportResultInfo:
    int8 player count, 3 bytes padding, uint32 selected id). */
@@ -98,7 +108,11 @@ void *runtime_input_override(const char *name){
  {"_ZN2nn3hid18SetNpadJoyHoldTypeENS0_15NpadJoyHoldTypeE",hold_type},{"_ZN2nn3hid14DisconnectNpadERKj",disconnect},
  {"_ZN2nn3hid21ShowControllerSupportEPNS0_27ControllerSupportResultInfoERKNS0_20ControllerSupportArgE",show_controller_support},
  {"_ZN2nn3hid15InitializeMouseEv",initialize_mouse},{"_ZN2nn3hid18InitializeKeyboardEv",initialize_keyboard},
- {"_ZN2nn3hid14GetMouseStatesEPNS0_10MouseStateEi",mouse_states},{"_ZN2nn3hid16GetKeyboardStateEPNS0_13KeyboardStateE",keyboard_state}};
+ {"_ZN2nn3hid14GetMouseStatesEPNS0_10MouseStateEi",mouse_states},{"_ZN2nn3hid16GetKeyboardStateEPNS0_13KeyboardStateE",keyboard_state},
+ {"_ZN2nn3hid21InitializeTouchScreenEv",initialize_touch_screen},{"_ZN2nn3hid19GetTouchScreenStateILm5EEEvPNS0_16TouchScreenStateIXT_EEE",touch_screen_state},
+ {"_ZN2nn3hid13GetMouseStateEPNS0_10MouseStateE",mouse_state},{"_ZN2nn3hid12GetNpadStateEPNS0_16NpadFullKeyStateERKj",full_state},
+ {"_ZN2nn3hid12GetNpadStateEPNS0_17NpadHandheldStateERKj",handheld_state},{"_ZN2nn3hid12GetNpadStateEPNS0_16NpadJoyDualStateERKj",disconnected_state},
+ {"_ZN2nn3hid12GetNpadStateEPNS0_16NpadJoyLeftStateERKj",disconnected_state},{"_ZN2nn3hid12GetNpadStateEPNS0_17NpadJoyRightStateERKj",disconnected_state}};
  for(unsigned i=0;i<sizeof(entries)/sizeof(*entries);i++)if(!strcmp(name,entries[i].name))return entries[i].fn;return NULL;
 }
 

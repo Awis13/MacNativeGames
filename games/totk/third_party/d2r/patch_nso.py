@@ -165,6 +165,19 @@ OBS = {'db0507f36b84200ac05f75d76ed5026f': [
     (0x317298, 5, 'd10183ff', 'SetLanguage 入口（x1 → u32 新语言号，语言名表 main+0x20ae478）：配合上方语言重载剪口，宿主断言新语言为 zhCN；'
      '原指令 sub sp, sp, #0x60'),
 ]}
+# UltraCam 3.5.0 (exlaunch plugin subsdk3 for TOTK, TOTK_PLUGIN): RwPages asks virtmemFindAslr for the address of its RW
+# alias of code; host pages are 16 KiB, so the alias must sit at the same offset in its page as the code. The call becomes
+# svc 0x3e, which the host answers with such an address (x0 size, x26 the code address).
+CUTS['38ea2129009414362dba656e3125f7d4'] = [
+    (0x84364, '8ffcff97', 'c10700d4', 'RwPages::RwPages: bl virtmemFindAslr -> svc 0x3e (alias area from the host)'),
+    # The player state name getter returns NULL while the chain player+0x228 / +0x3a8 / +0x168 is not set up (save loading),
+    # and its 45 callers memcmp the result at once. Its ret becomes a branch into the next function's tail, which returns
+    # the result or, for NULL, an empty string.
+    (0x8487c, 'c0035fd6', '04000014', 'player state name: ret -> b 0x8488c (NULL becomes "")'),
+    # The shadow size hook caps the setting at 1024 x the console memory factor (1.0 on a Switch). The Mac has the memory:
+    # the setting is used as it is.
+    (0xb6b78, '0a010054', '1f2003d5', 'shadow size hook: b.ge (memory cap) -> nop'),
+]
 BUILD_ID = d[0x40:0x50].hex()
 # 构建期产品规则：旧原资源/对拍域默认不变；触屏版单独出新版本，不在运行时写客体代码。
 # Build-time product rules: the old original-resource / comparison domain is unchanged by default; the touchscreen version is issued separately as a new version, and guest code is not written at runtime.
@@ -593,16 +606,33 @@ def rd(o, enc):
     if app == 0x10: v += o
     if app == 0x30: v += ehs
     return v, sz
-_, penc, cenc, tenc = IMG[ehs:ehs + 4]
-o = ehs + 4
-_, s = rd(o, penc); o += s
-nfde, s = rd(o, cenc); o += s
 starts = set()
-for _ in range(nfde):
-    a, s = rd(o, tenc); o += s
-    _, s = rd(o, tenc); o += s
-    starts.add(a)
-starts = sorted(x for x in starts if x < TEXT_END)
+if m0 + struct.unpack_from('<i', IMG, m0 + 20)[0] > ehs:
+    _, penc, cenc, tenc = IMG[ehs:ehs + 4]
+    o = ehs + 4
+    _, s = rd(o, penc); o += s
+    nfde, s = rd(o, cenc); o += s
+    for _ in range(nfde):
+        a, s = rd(o, tenc); o += s
+        _, s = rd(o, tenc); o += s
+        starts.add(a)
+else:
+    # Modules built without unwind tables (exlaunch plugins): entries are the BL targets, the defined
+    # dynamic symbols and the RELA pointers into the code.
+    starts.add(0)
+    for o in range(0, TEXT_END, 4):
+        w = struct.unpack_from('<I', IMG, o)[0]
+        if w & 0xFC000000 == 0x94000000: starts.add(o + 4 * (((w & 0x3FFFFFF) ^ 0x2000000) - 0x2000000))
+    dyn = m0 + struct.unpack_from('<i', IMG, m0 + 4)[0]; dt = {}
+    while struct.unpack_from('<q', IMG, dyn)[0]:
+        tag, value = struct.unpack_from('<qQ', IMG, dyn); dt[tag] = value; dyn += 16
+    for i in range(1, (dt[5] - dt[6]) // 24 if dt[5] > dt[6] else 0):
+        _, info, _, section, value, _ = struct.unpack_from('<IBBHQQ', IMG, dt[6] + 24 * i)
+        if section and info & 15 == 2: starts.add(value)
+    for off in range(dt.get(7, 0), dt.get(7, 0) + dt.get(8, 0), 24):
+        _, info, addend = struct.unpack_from('<QQq', IMG, off)
+        if info & 0xFFFFFFFF == 1027 and 0 <= addend < TEXT_END and addend % 4 == 0: starts.add(addend)
+starts = sorted(x for x in starts if 0 <= x < TEXT_END)
 
 # ---- 线性扫描找全部改写点（不靠寄存器读写报告）----
 # ---- Linear scan to find all rewrite points (not relying on register read/write reports) ----

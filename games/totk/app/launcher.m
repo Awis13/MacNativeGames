@@ -93,7 +93,7 @@ static BOOL make_dir(NSString *path) {
    "Show this window at every launch" was turned off. Test runs (TOTK_SLOT_OWNER other than user, or TOTK_LAUNCHER=0)
    skip it, and a variable that is already set in the environment always wins over the window's choice. */
 typedef struct { NSString *key, *title; NSArray<NSString *> *labels; NSInteger fallback; NSString *help; } Choice;
-enum { C_DISPLAY, C_OUTPUT, C_SCENE, C_UPSCALE, C_ANISO, C_INTERP, C_FPS, C_PAD, C_ICONS, NCHOICES };
+enum { C_DISPLAY, C_OUTPUT, C_SCENE, C_UPSCALE, C_ANISO, C_SHADOWS, C_DETAIL, C_INTERP, C_FPS, C_PAD, C_ICONS, NCHOICES };
 static Choice choices[NCHOICES];
 static void choices_init(void) {
     choices[C_DISPLAY] = (Choice){@"display", @"Display", @[@"Full screen", @"Window"], 0,
@@ -106,6 +106,10 @@ static void choices_init(void) {
         @"How the 3D scene is scaled up to the chosen resolution and to the screen."};
     choices[C_ANISO] = (Choice){@"aniso", @"Texture filtering", @[@"Game default", @"4x anisotropic", @"8x anisotropic", @"16x anisotropic"], 3,
         @"Sharper ground, roads and walls seen at a shallow angle. Almost free on a Mac GPU."};
+    choices[C_SHADOWS] = (Choice){@"shadows", @"Shadows", @[@"Game default", @"Sharp (2048)", @"Sharpest (4096)"], 1,
+        @"Shadow map size, through UltraCam. The game draws shadows 800 pixels wide; 2048 costs under a millisecond per frame, 4096 about one and a half."};
+    choices[C_DETAIL] = (Choice){@"detail", @"Level of detail", @[@"Game default", @"Higher"], 1,
+        @"Through UltraCam: trees and objects keep their full models further away (its draw distance setting 25000 \u2192 50000)."};
     choices[C_INTERP] = (Choice){@"interp", @"Frame generation", @[@"Off", @"30 + 30", @"Half the refresh rate", @"Unlimited"], 3,
         @"MetalFX frame interpolation: a generated frame between every two game frames. Key 2 cycles it while playing."};
     choices[C_FPS] = (Choice){@"fps", @"Frame rate", @[@"Up to 60 FPS", @"Original 30 FPS"], 0,
@@ -118,6 +122,11 @@ static void choices_init(void) {
 static NSString *const kShowFps = @"showOverlay", *const kShowWindow = @"showLauncher", *const kDynres = @"fixedResolution";
 
 static void put(const char *name, const char *value) { if (value) setenv(name, value, 0); }
+/* UltraCam (MaxLastBreath's exlaunch plugin), rewritten into the app by build_app.py --ultracam: its rows only show then. */
+static NSString *ultracam_dir(void) {
+    NSString *dir = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"totk/rewritten/plugins/ultracam"];
+    return [NSFileManager.defaultManager fileExistsAtPath:[dir stringByAppendingPathComponent:@"subsdk3.patched.bin"]] ? dir : nil;
+}
 static void apply_settings(NSUserDefaults *d) {
     NSInteger v[NCHOICES];
     for (int i = 0; i < NCHOICES; i++) {
@@ -148,6 +157,13 @@ static void apply_settings(NSUserDefaults *d) {
     put("TOTK_MFX_OUTPUT", v[C_UPSCALE] == 0 ? "1" : "0");
     static const char *aniso[] = {"0", "4", "8", "16"};
     put("TOTK_ANISO", aniso[v[C_ANISO]]);
+    NSString *ultracam = ultracam_dir();
+    if (ultracam && (v[C_SHADOWS] || v[C_DETAIL])) {
+        static const char *sizes[] = {"0", "2048", "4096"};
+        put("TOTK_PLUGIN", ultracam.fileSystemRepresentation);
+        put("TOTK_ULTRACAM_SHADOWS", sizes[v[C_SHADOWS]]);
+        put("TOTK_ULTRACAM_LOD", v[C_DETAIL] ? "5" : "1");
+    }
     put("TOTK_DYNRES", [d objectForKey:kDynres] == nil || [d boolForKey:kDynres] ? "0" : "1");
     static const char *interp[] = {"0", "interp30", "interp", "interpmax"};
     put("TOTK_MFX", interp[v[C_INTERP]]);
@@ -201,6 +217,7 @@ static NSTextField *label(NSString *text, CGFloat size, NSFontWeight weight, NSC
         p.toolTip = choices[i].help;
         [p.widthAnchor constraintEqualToConstant:260].active = YES;
         [self.popups addObject:p];
+        if ((i == C_SHADOWS || i == C_DETAIL) && !ultracam_dir()) continue;
         [rows addObject:@[label([choices[i].title stringByAppendingString:@":"], 13, NSFontWeightRegular, NSColor.labelColor), p]];
     }
     self.dynres = [NSButton checkboxWithTitle:@"Keep the 3D resolution fixed" target:nil action:nil];

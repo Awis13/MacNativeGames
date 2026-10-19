@@ -749,6 +749,25 @@ def sign_app(app, logs):
     run(['codesign', '--verify', '--deep', '--strict', app], logs / 'verify-app-signature.log')
 
 
+# UltraCam (MaxLastBreath/TOTK-mods), the exlaunch plugin for TOTK 1.4.x, by the SHA-256 of its exefs/subsdk3. Its code is
+# rewritten like the game's modules (third_party/d2r/patch_nso.py has the plugin's cuts) and loaded by the runtime with
+# TOTK_PLUGIN; the settings window then offers its shadow size and level of detail.
+ULTRACAM = {'3273a1f6cf5af36a5135da74ced66e292e4655174807e883ab4408b73a636fb9': '3.5.0'}
+
+
+def step_ultracam(tree, plugin, env, logs, *, version):
+    if version != 'v143':
+        raise BuildError('--ultracam needs the 1.4.3 update (--update)')
+    got = sha256(plugin)
+    if got not in ULTRACAM:
+        raise BuildError(f'{plugin} is not a supported UltraCam subsdk3 (supported: {", ".join(ULTRACAM.values())}; sha256 {got})')
+    say(f'4/4 app: rewriting UltraCam {ULTRACAM[got]} for Apple silicon')
+    out = tree / 'rewritten/plugins/ultracam'
+    out.mkdir(parents=True, exist_ok=True)
+    run([tree / '.venv/bin/python', 'third_party/d2r/patch_nso.py', plugin, out, 'subsdk3'], logs / 'rewrite_ultracam.log', cwd=tree,
+        env=dict(env, DM_RULESET='native', DM_PRIVATE_GATES='0'))
+
+
 def step_app(tree, out, logs, *, version="v0"):
     expected = VERSIONS[version]
     tmp = out.with_name(out.name + '.partial')
@@ -763,6 +782,10 @@ def step_app(tree, out, logs, *, version="v0"):
     clone(tree / 'prebuilt/macos-arm64/totk_xlate', res / 'build/shader-service/totk_xlate')   # where totk_shader_rt.m looks for it
     for rel in (f'extracted/{version}/romfs-patches', f'extracted/{version}/romfs-patches-out', 'extracted/firmware/shared-fonts'):
         copy_tree(tree / rel, res / rel)
+    plugin = tree / 'rewritten/plugins/ultracam'
+    if (plugin / 'subsdk3.patched.bin').is_file():
+        for name in ('subsdk3.patched.bin', 'subsdk3.fixups.tsv', 'subsdk3.gates.tsv', 'subsdk3.cuts.tsv'):
+            clone(plugin / name, res / 'rewritten/plugins/ultracam' / name)
     seed = tree/f'build/shader-seed/{version}'
     if not (seed/'seed-manifest.json').is_file():
         raise BuildError('startup shader seed was not prepared; refusing an app without first-launch warm-up data')
@@ -903,6 +926,7 @@ def parse_args(argv):
                                  epilog='example: python3 build_app.py ~/Games/totk.xci -k ~/keys/prod.keys')
     ap.add_argument('game', type=Path, help='the game file (.xci or .nsp), base game 1.0.0')
     ap.add_argument('--update', type=Path, help='separate supported cumulative update NSP/NSZ; outputs the same single app')
+    ap.add_argument('--ultracam', type=Path, help='UltraCam 3.5.0 exefs/subsdk3 (github.com/MaxLastBreath/TOTK-mods; 1.4.3 only): shadow size and level of detail in the settings window')
     ap.add_argument('--platform', choices=('macos','ios'), default='macos', help='build a macOS app (default) or unsigned iPhone/iPad IPA')
     ap.add_argument('-k', '--keys', type=Path, required=True, help='your prod.keys')
     ap.add_argument('-o', '--out', type=Path, help=f'the app or IPA to write (default depends on --platform; next to the game file)')
@@ -982,6 +1006,8 @@ def main(argv):
     step_shaders(tree, logs, version=version)
     step_shader_libs(tree, logs, version=version)
     step_binary(tree, game, keys, env, logs, version=version)
+    if args.ultracam and args.platform == 'macos':
+        step_ultracam(tree, args.ultracam.expanduser().resolve(), env, logs, version=version)
     say(f'4/4 app: assembling {out}')
     if args.platform=='ios':
         run([py, 'ios/tools/build_ipa.py', '--tree', tree, '--out', out, '--version', version,

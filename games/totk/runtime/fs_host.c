@@ -27,7 +27,7 @@
 #define R_OPEN_MODE 0x307402u
 #define R_APPEND_REQUIRED 0x2f5e02u
 #define TOTK_APPLICATION_ID 0x0100f2c0115b6000ULL
-enum { M_FREE, M_SAVE, M_TEMP, M_CACHE };
+enum { M_FREE, M_SAVE, M_TEMP, M_CACHE, M_SD };
 enum { OPEN_READ = 1, OPEN_WRITE = 2, OPEN_APPEND = 4 };
 #define FILE_BASE 0x200000000ULL
 #define DIR_BASE 0x300000000ULL
@@ -139,6 +139,12 @@ static unsigned mount_save_ro(const char *name, uint64_t application, const uint
     return mount_add(name, M_SAVE, save_root);
 }
 static unsigned mount_temp(const char *name) { ready(); char p[1100]; snprintf(p, sizeof p, "%s/temp", profile); return mount_add(name, M_TEMP, p); }
+/* The SD card (only an exlaunch plugin mounts it, for its settings): TOTK_SDCARD_DIR, else <profile>/sdcard. */
+static unsigned mount_sd(const char *name) {
+    ready(); char p[1100]; const char *dir = getenv("TOTK_SDCARD_DIR");
+    if (dir && *dir) snprintf(p, sizeof p, "%s", dir); else { snprintf(p, sizeof p, "%s/sdcard", profile); make_dir(p); }
+    return mount_add(name, M_SD, p);
+}
 static void cache_dir(int index, char *out, size_t cap) { snprintf(out, cap, "%s/cache/%d", profile, index); }
 static unsigned create_cache(int index, int64_t size, int64_t journal) {
     ready(); if (index < 0 || size < 0 || journal < 0) return R_INVALID_ARGUMENT;
@@ -352,7 +358,7 @@ void *runtime_fs_host_override(const char *name) {
         {"_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", mount_save},
         {"_ZN2nn2fs21MountSaveDataReadOnlyEPKcNS_13ApplicationIdERKNS_7account3UidE", mount_save_ro},
         {"_ZN2nn2fs18IsSaveDataExistingENS_13ApplicationIdERKNS_7account3UidE", save_exists},
-        {"_ZN2nn2fs21MountTemporaryStorageEPKc", mount_temp}, {"_ZN2nn2fs7UnmountEPKc", unmount}, {"_ZN2nn2fs6CommitEPKc", commit},
+        {"_ZN2nn2fs21MountTemporaryStorageEPKc", mount_temp}, {"_ZN2nn2fs11MountSdCardEPKc", mount_sd}, {"_ZN2nn2fs7UnmountEPKc", unmount}, {"_ZN2nn2fs6CommitEPKc", commit},
         {"_ZN2nn2fs18CreateCacheStorageEill", create_cache}, {"_ZN2nn2fs18DeleteCacheStorageEi", delete_cache},
         {"_ZN2nn2fs17MountCacheStorageEPKci", mount_cache},
         {"_ZN2nn2fs20OpenCacheStorageListEPNS0_22CacheStorageListHandleE", open_cache_list},

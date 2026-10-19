@@ -150,6 +150,16 @@ The 1.4.3 port has separately passed scene loading, movement/jumps, menus/map, s
 
 The 1.2.1 port (October 19) passed the same rewrite verification (600 of 600 negative controls) and the loader, RomFS and startup probes. On an M4 Mac it loaded saves in the 1.0.0 and 1.1.2 formats and passed movement/jumps, menus/map/quick menus, manual save and reload in a new process, fall death and retry, and the three key-3 picture modes; the packaged app was also opened through its launcher. See [the 1.2.1 test record](docs/v1.2.1-port.md); this is not full-game or long-session certification.
 
+### Sharper shadows and more detail with UltraCam (1.4.3)
+
+[UltraCam](https://github.com/MaxLastBreath/TOTK-mods) is MaxLastBreath's exlaunch plugin for TOTK. Download UltraCam 3.5.0 yourself and pass its `exefs/subsdk3` when building 1.4.3:
+
+```sh
+python3.14 build_app.py ~/Games/totk.xci -k ~/keys/prod.keys --update ~/Games/1.4.3.nsz --ultracam ~/Downloads/UltraCam/exefs/subsdk3
+```
+
+The plugin's code is rewritten for Apple silicon like the game's own modules, and the settings window gains two rows: **Shadows** (the game's 800, 2048 or 4096) and **Level of detail** (trees and objects keep their full models further away; UltraCam's draw distance setting goes from 25000 to 50000). Its settings file is written to the profile's `sdcard/UltraCam/TOTK/Config/maxlastbreath.ini`, with its frame rate control, FSR and FXAA off (the runtime has its own). Its in-game menu, its resolution hook and one camera patch stay off: they conflict with the runtime's own picture path. Only 3.5.0 is supported (the build checks its SHA-256).
+
 ### iPhone and iPad
 
 Version 1.4.3 has been played on an **iPhone 14 (iOS 26.6.1)** and an **iPad with the A16 chip (iPadOS 26.7.1)**, both signed with a personal development team in Xcode. Versions 1.0.0, 1.1.2 and 1.2.1 have not been tested on iOS.

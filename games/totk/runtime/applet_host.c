@@ -2,8 +2,10 @@
    Client-side SDK code (PlayReport encoding, keyboard presets, diag logging) runs unchanged; only the
    calls that would talk to system services are taken here. */
 #include "runtime.h"
+#include "game_version.h"
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* ---------- nn::oe ---------- */
@@ -66,6 +68,9 @@ static unsigned nfp_attach_availability(void *event) { if (!event) runtime_fail(
 static unsigned nfp_no_device(void) { return NFP_DEVICE_NOT_FOUND; }
 static int nfp_device_state(const void *h) { (void)h; return 0; }
 
+/* nn::oe::GetDisplayVersion: the update's version string (DisplayVersion is char[16]); the game itself does not ask. */
+static void display_version(char *out) { if (!out) runtime_fail("display version output"); memset(out, 0, 16); const char *v = getenv("TOTK_DISPLAY_VERSION"); strncpy(out, v && *v ? v : TOTK_GAME_VERSION, 15); }
+
 /* ---------- nn::err (nn::swkbd is in runtime/swkbd_host.c) ---------- */
 static void show_error(uint32_t result) {
     fprintf(stderr, "[totk] game error dialog: %04u-%04u (result %#x)\n", 2000 + (result & 0x1ff), (result >> 9) & 0x1fff, result);
@@ -81,7 +86,7 @@ void *runtime_applet_override(const char *name) {
         {"_ZN2nn2oe25GetProgramTotalActiveTimeEv", total_active_time}, {"_ZN2nn2oe38SetUserInactivityDetectionTimeExtendedEb", inactivity_extended},
         {"_ZN2nn2oe44SetUserInactivityDetectionTimeExtendedUnsafeEb", inactivity_extended},
         {"_ZN2nn2oe17FinishStartupLogoEv", finish_startup_logo}, {"_ZN2nn2oe25TryPopNotificationMessageEPj", try_pop},
-        {"_ZN2nn2oe22PopNotificationMessageEv", pop},
+        {"_ZN2nn2oe22PopNotificationMessageEv", pop}, {"_ZN2nn2oe17GetDisplayVersionEPNS0_14DisplayVersionE", display_version},
         {"_ZN2nn5prepo10PlayReport4SaveEv", report_save}, {"_ZN2nn5prepo10PlayReport4SaveERKNS_7account3UidE", report_save_uid},
         {"_ZN2nn5prepo28RequestImmediateTransmissionEv", immediate_transmission},
         {"_ZN2nn5prepo27AddInternetConnectionStatusEPNS0_10PlayReportEPKcS4_S4_", connection_status},

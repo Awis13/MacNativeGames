@@ -11,6 +11,7 @@ typedef struct {
  const Symbol *symbols; unsigned nsym; const Reloc *relocs; unsigned nreloc;
  const Gate *gates; unsigned ngate; unsigned *hash, hash_mask;
  uint8_t *base; unsigned relative, symbolic, cross, weak;
+ unsigned extra; uint8_t *place;   /* extra: 0 game module, 1 rtld stand-in, 2 plugin (TOTK_PLUGIN); place: fixed address or NULL */
 } Module;
 extern pthread_key_t runtime_keys[8];
 _Noreturn void runtime_fail(const char *message);
@@ -50,6 +51,12 @@ uint8_t *runtime_module_base(const char *name);   /* runtime/loader.c: "main", "
 uint64_t runtime_module_permission(uint64_t address,uint64_t size,unsigned permission);
 uint64_t runtime_module_lock_permission(uint64_t address,uint64_t size,unsigned mask,unsigned attribute);
 int runtime_module_query(uint64_t address,uint64_t *base,uint64_t *size,unsigned *state,unsigned *permission,unsigned *attribute);
+/* runtime/loader.c, exlaunch plugin (TOTK_PLUGIN): 1 when one is loaded; its view of unknown addresses for QueryMemory;
+   svcMapProcessMemory / svcUnmapProcessMemory; the RW alias address its RwPages asks for (svc 0x3e, a cut in the plugin). */
+int runtime_plugin_active(void);
+void runtime_plugin_gap(uint64_t address,uint64_t *base,uint64_t *size,unsigned *state,unsigned *permission);
+uint64_t runtime_process_memory(int map,uint64_t dst,uint64_t src,uint64_t size);
+uint64_t runtime_plugin_alias_area(uint64_t ro,uint64_t size);
 void runtime_oe_push_message(uint32_t message);
 void hle_bind_system_event(void *event, int autoclear);
 uint64_t runtime_svc(unsigned num, uint64_t *regs, const char *module, uint64_t offset);

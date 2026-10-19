@@ -286,8 +286,19 @@ void *runtime_observer(const char *name) {
  {"_ZN2nn2os21AllocateAddressRegionEPmm",observed_region},{"_ZN2nn2os19AllocateMemoryPagesEmm",observed_pages},{"nnosInitialize",observed_os_init},{"nninitInitializeSdkModule",observed_sdk_init},{"nninitStartup",observed_startup},{"nnMain",observed_main}};
  for(size_t i=0;i<sizeof(entries)/sizeof(entries[0]);i++)if(!strcmp(name,entries[i].name))return entries[i].fn;return NULL;
 }
+/* Network for an exlaunch plugin (TOTK_PLUGIN; UltraCam's network logger): no network, every socket call fails. */
+static uint32_t nifm_initialize(void){return 0;}
+static void nifm_submit(void){}
+static bool nifm_available(void){return false;}
+static uint32_t socket_initialize(const void *config){(void)config;return 0;}
+static int socket_fail(void){return -1;}
+static int socket_aton(const char *text,uint32_t *out){(void)text;if(out)*out=0;return 0;}
+static uint16_t socket_htons(uint16_t v){return (uint16_t)(v<<8|v>>8);}
 void *runtime_override(const char *name) {
  static const struct {const char *name;void *fn;} entries[]={
+  {"_ZN2nn4nifm10InitializeEv",nifm_initialize},{"_ZN2nn4nifm20SubmitNetworkRequestEv",nifm_submit},{"_ZN2nn4nifm18IsNetworkAvailableEv",nifm_available},
+  {"_ZN2nn6socket10InitializeERKNS0_6ConfigE",socket_initialize},{"_ZN2nn6socket6SocketEiii",socket_fail},{"_ZN2nn6socket7ConnectEiPK8sockaddrj",socket_fail},
+  {"_ZN2nn6socket4SendEiPKvmi",socket_fail},{"_ZN2nn6socket4RecvEiPvmi",socket_fail},{"_ZN2nn6socket8InetAtonEPKcP7in_addr",socket_aton},{"_ZN2nn6socket9InetHtonsEt",socket_htons},
   {"_ZN2nn2oe18GetDesiredLanguageEv",desired_language},
   {"_ZN2nn2oe27SetPerformanceConfigurationENS0_15PerformanceModeEi",performance_config},
   {"_ZN2nn2oe15SetCpuBoostModeENS0_12CpuBoostModeE",cpu_boost},{"_ZN2nn2oe16GetOperationModeEv",operation_mode},{"_ZN2nn2oe18GetPerformanceModeEv",performance_mode},
@@ -301,6 +312,10 @@ void *runtime_override(const char *name) {
  void *input=runtime_input_override(name);if(input)return input;void *font=runtime_font_override(name);if(font)return font;void *codec=runtime_codec_override(name);if(codec)return codec;void *movie=runtime_movie_override(name);if(movie)return movie;void *clock=runtime_time_override(name);if(clock)return clock;void *applet=runtime_applet_override(name);if(applet)return applet;void *swkbd=runtime_swkbd_override(name);if(swkbd)return swkbd;void *account=runtime_account_override(name);if(account)return account;void *fs=runtime_fs_override(name);if(fs)return fs;void *front=runtime_front_override(name);return front?front:runtime_gfx_override(name);
 }
 void runtime_core_checkpoint(void);
+static void need_plugin(unsigned num,const char *module) {
+ if(runtime_plugin_active()&&!strcmp(module,"subsdk3"))return;
+ fprintf(stderr,"[totk] unimplemented SVC 0x%x at %s\n",num,module);runtime_fail("system service not implemented");
+}
 uint64_t runtime_svc(unsigned num,uint64_t *r,const char *module,uint64_t offset) {
  runtime_core_checkpoint();
  // Successful SVCs occur several times per frame. Keep the detailed trace available
@@ -332,23 +347,31 @@ uint64_t runtime_svc(unsigned num,uint64_t *r,const char *module,uint64_t offset
   /* AliasRegionExtraSize (18.0.0+): our alias reservation contains no
    * kernel-owned extension outside the range reported by ids 2 and 3. */
   case 28:value=0;break;
-  default:fprintf(stderr,"unknown GetInfo id %u\n",id);runtime_fail("GetInfo id not implemented");
+  /* MesosphereCurrentProcess: a real handle to the own process (exlaunch asks before falling back to an IPC trick). */
+  case 65001:if(!runtime_plugin_active())goto unknown;value=0xffff8001;break;
+  default:unknown:fprintf(stderr,"unknown GetInfo id %u\n",id);runtime_fail("GetInfo id not implemented");
   }
   r[0]=0;r[1]=value;return 0;
  }
  case 0x2c:case 0x2d:{uint64_t a=r[0],n=r[1];r[0]=alias_map(num==0x2d,a,n);
   if(getenv("TOTK_MEM_LOG"))fprintf(stderr,"[totk-mem] %sMapPhysicalMemory %#llx+%#llx -> %#llx alias=%#llx remaining=%#llx\n",num==0x2d?"Un":"",(unsigned long long)a,(unsigned long long)n,(unsigned long long)r[0],(unsigned long long)alias_bytes,(unsigned long long)(APP_POOL-runtime_image_bytes()-heap_size-alias_bytes));
   if(r[0])fprintf(stderr,"[totk] %sMapPhysicalMemory %#llx+%#llx failed %#llx (alias %#llx used, heap %#llx)\n",num==0x2d?"Un":"",(unsigned long long)a,(unsigned long long)n,(unsigned long long)r[0],(unsigned long long)alias_bytes,(unsigned long long)heap_size);return r[0];}
+ /* exlaunch plugin: MapProcessMemory / UnmapProcessMemory (x0 dst, w1 process, x2 src, x3 size) and its alias address. */
+ case 0x74:case 0x75:need_plugin(num,module);r[0]=runtime_process_memory(num==0x74,r[0],r[2],r[3]);return r[0];
+ case 0x3e:need_plugin(num,module);r[0]=runtime_plugin_alias_area(r[26],r[0]);return 0;
+ case 0x1e:{r[0]=runtime_now_ns()*12/625;return 0;}   /* GetSystemTick (19.2 MHz) */
  case 0x04:case 0x05:r[0]=stack_move(num==5,r[0],r[1],r[2]);return r[0];
  case 0x06: {
   uint64_t addr=r[2],base=addr&~0xfffULL,size=0x1000;unsigned state=0,perm=0,attr=0;
   uintptr_t top=(uintptr_t)pthread_get_stackaddr_np(pthread_self());size_t stack=pthread_get_stacksize_np(pthread_self());
-  if(addr>=top-stack&&addr<top){base=top-stack;size=stack;state=0xb;perm=3;}
+  if(runtime_plugin_active()&&runtime_module_query(addr,&base,&size,&state,&perm,&attr)){}
+  else if(addr>=top-stack&&addr<top){base=top-stack;size=stack;state=0xb;perm=3;}
   else if(addr>=(uintptr_t)heap&&addr<(uintptr_t)heap+heap_size){base=(uintptr_t)heap;size=heap_size;state=5;perm=3;}
   else if(addr>=(uintptr_t)low_space&&addr<(uintptr_t)low_space+LOW_SIZE){base=(uintptr_t)low_space;size=LOW_SIZE;if(addr<(uintptr_t)heap){size=(uintptr_t)heap-base;}else{base=(uintptr_t)heap+heap_size;size=(uintptr_t)low_space+LOW_SIZE-base;}}
   else if(addr>=(uintptr_t)low_space+LOW_SIZE&&addr<ALIAS_START){base=(uintptr_t)low_space+LOW_SIZE;size=ALIAS_START-base;state=0x10;perm=0;}   /* host-owned: Inaccessible */
-  else if(!addr){base=0;size=ASLR_START;state=0;perm=0;}
+  else if(!addr&&!runtime_plugin_active()){base=0;size=ASLR_START;state=0;perm=0;}
   else if(runtime_module_query(addr,&base,&size,&state,&perm,&attr)){}
+  else if(runtime_plugin_active())runtime_plugin_gap(addr,&base,&size,&state,&perm);
   else {state=3;perm=5;}
   pthread_mutex_lock(&memory_lock);
   if(addr>=ALIAS_START&&addr<ALIAS_START+ALIAS_SIZE){
