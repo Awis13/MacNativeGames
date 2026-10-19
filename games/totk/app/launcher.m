@@ -93,7 +93,7 @@ static BOOL make_dir(NSString *path) {
    "Show this window at every launch" was turned off. Test runs (TOTK_SLOT_OWNER other than user, or TOTK_LAUNCHER=0)
    skip it, and a variable that is already set in the environment always wins over the window's choice. */
 typedef struct { NSString *key, *title; NSArray<NSString *> *labels; NSInteger fallback; NSString *help; } Choice;
-enum { C_DISPLAY, C_OUTPUT, C_SCENE, C_UPSCALE, C_ANISO, C_INTERP, C_FPS, C_PAD, NCHOICES };
+enum { C_DISPLAY, C_OUTPUT, C_SCENE, C_UPSCALE, C_ANISO, C_INTERP, C_FPS, C_PAD, C_ICONS, NCHOICES };
 static Choice choices[NCHOICES];
 static void choices_init(void) {
     choices[C_DISPLAY] = (Choice){@"display", @"Display", @[@"Full screen", @"Window"], 0,
@@ -112,6 +112,8 @@ static void choices_init(void) {
         @"Up to 60 FPS lets the game run faster than the Switch's 30 FPS where the Mac keeps up."};
     choices[C_PAD] = (Choice){@"pad", @"Controller", @[@"Switch layout (by position)", @"As labeled on the controller"], 0,
         @"Switch layout: the right face button is A and the bottom one is B, as the on-screen prompts show."};
+    choices[C_ICONS] = (Choice){@"icons", @"Button icons", @[@"Xbox (A B X Y as on the controller)", @"Nintendo"], 0,
+        @"With the Switch layout, the prompts show the letter printed on an Xbox controller's button: the right one is B, the bottom one A."};
 }
 static NSString *const kShowFps = @"showOverlay", *const kShowWindow = @"showLauncher", *const kDynres = @"fixedResolution";
 
@@ -126,10 +128,18 @@ static void apply_settings(NSUserDefaults *d) {
     put("TOTK_FULLSCREEN", v[C_DISPLAY] == 0 ? "1" : "0");
     static const char *outputs[] = {"0", "2560x1440", "3440x1440"};
     put("TOTK_OUTPUT_RES", outputs[v[C_OUTPUT]]);
-    if (v[C_OUTPUT] == 2) {   // a true 21:9 canvas: the camera's aspect follows it (runtime/aspect_patch.h) and the UI layouts
-        put("TOTK_ASPECT", "3440x1440");   // are laid out for it (scripts/make_romfs_patches.py --aspect), not squeezed at draw time
-        put("TOTK_ROMFS_PATCHES", "extracted/" TOTK_GAME_DIR "/romfs-patches-3440x1440");
+    /* The game's own RomFS fixes come in variants (scripts/make_romfs_patches.py): -3440x1440 lays the UI out for a true
+       21:9 canvas, -xbox gives the prompts Xbox face-button letters (only with the by-position mapping: by label the
+       Nintendo letters already match the Xbox controller's). */
+    int wide = v[C_OUTPUT] == 2, xbox = v[C_ICONS] == 0 && v[C_PAD] == 0;
+    if (wide) {   // a true 21:9 canvas: the camera's aspect follows it (runtime/aspect_patch.h), the UI is not squeezed at draw time
+        put("TOTK_ASPECT", "3440x1440");
         put("TOTK_UI_SQUEEZE", "0");
+    }
+    if (wide || xbox) {
+        char patches[128];
+        snprintf(patches, sizeof patches, "extracted/" TOTK_GAME_DIR "/romfs-patches%s%s", wide ? "-3440x1440" : "", xbox ? "-xbox" : "");
+        put("TOTK_ROMFS_PATCHES", patches);
     }
     /* The 3D size follows the canvas's shape: the same 900 / 1080 / 1440 lines, 21:9 wide on the ultrawide canvas. */
     static const char *scenes[] = {"0", "1920x1080", "2560x1440"}, *wide_scenes[] = {"2150x900", "2580x1080", "3440x1440"};
