@@ -5319,9 +5319,11 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
     d.sAddressMode = wrapm(p.ws); d.tAddressMode = wrapm(p.wt); d.rAddressMode = wrapm(p.wr);
     d.lodMinClamp = p.lod_min < 0 ? 0 : p.lod_min; d.lodMaxClamp = p.lod_max;
     d.maxAnisotropy = p.aniso < 1 ? 1 : p.aniso > 16 ? 16 : (NSUInteger)p.aniso;
-    /* TOTK_ANISO=<2..16> (the launcher's texture filtering): at least that much anisotropy for the game's ordinary
-       textures, the linearly filtered, mipmapped ones (ground, walls, foliage seen at a grazing angle); point-sampled
-       lookups, unmipmapped targets and shadow-compare samplers keep the game's own setting. */
+    /* TOTK_ANISO=<2..16> (the launcher's texture filtering): at least that much anisotropy for the game's material
+       textures, the linearly filtered, mipmapped and repeating ones (ground, walls, foliage seen at a grazing angle).
+       Clamped samplers keep the game's setting: some read data rather than colour, and anisotropy there left bright
+       green pixels along Link's outline in the inventory (150-240 per frame at 3440x1440, 8-17 without). Point-sampled
+       lookups, unmipmapped targets and shadow-compare samplers keep it too. */
     {   /* diagnostic: what the game asks for (with TOTK_ANISO; 2026-10-19: 1x for all, 53 of the first 64 linear + mipmapped) */
         static unsigned n, by_aniso[17], by_kind[4];
         if (getenv("TOTK_ANISO")) {
@@ -5333,8 +5335,10 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
     }
     static int aniso = -1;
     if (aniso < 0) { const char *e = getenv("TOTK_ANISO"); aniso = e ? atoi(e) : 0; if (aniso < 0 || aniso > 16) aniso = 0; }
+    BOOL repeats = (d.sAddressMode == MTLSamplerAddressModeRepeat || d.sAddressMode == MTLSamplerAddressModeMirrorRepeat) &&
+                   (d.tAddressMode == MTLSamplerAddressModeRepeat || d.tAddressMode == MTLSamplerAddressModeMirrorRepeat);
     if (aniso > 1 && !p.cmp_mode && d.minFilter == MTLSamplerMinMagFilterLinear && d.magFilter == MTLSamplerMinMagFilterLinear &&
-        d.mipFilter != MTLSamplerMipFilterNotMipmapped && d.maxAnisotropy < (NSUInteger)aniso) {
+        d.mipFilter != MTLSamplerMipFilterNotMipmapped && d.maxAnisotropy < (NSUInteger)aniso && repeats) {
         d.maxAnisotropy = (NSUInteger)aniso;
     }
     if (p.cmp_mode) d.compareFunction = (MTLCompareFunction)(p.cmp_func - 1);
