@@ -117,6 +117,11 @@ if args.aspect:
     ultrawide = importlib.util.module_from_spec(spec); spec.loader.exec_module(ultrawide)
     width, height = (int(v) for v in args.aspect.lower().split('x'))
     layout = ultrawide.apply(blarc, members, width, height, hud_corner=args.hud == 'corner')
+if args.glyphs:   # the HUD's key icons (scripts/button_glyphs.py apply_hud)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('button_glyphs', Path(__file__).resolve().parent / 'button_glyphs.py')
+    hud = importlib.util.module_from_spec(spec); spec.loader.exec_module(hud)
+    layout = [*layout, hud.apply_hud(blarc, members, root / 'assets/xbox-prompts')]
 check = zstd.decompress(zstd.compress(bytes(blarc), level=19, zstd_dict=dictionary), zstd_dict=dictionary)
 assert check == bytes(blarc)
 original = zstd.decompress(raw, zstd_dict=dictionary)
@@ -156,17 +161,45 @@ if args.glyphs:
     spec = importlib.util.spec_from_file_location('button_glyphs', Path(__file__).resolve().parent / 'button_glyphs.py')
     glyphs = importlib.util.module_from_spec(spec); spec.loader.exec_module(glyphs)
     MEMBER = 'scft/External.bfotf'
+    grown = {}   # archive path without .zs -> (shipped size, new size), for the resource size table below
     for path in sorted(p for p in files if p.startswith('Font/') and p.endswith('.bfarc.zs')):
         with (root / f'extracted/{version}/romfs/romfs.bin').open('rb') as image:
             f = files[path]; image.seek(f['offset']); raw = image.read(f['size']); assert len(raw) == f['size']
         info = zstd.get_frame_info(raw); dictionary = dictionaries.get(info.dictionary_id)
         arc = bytearray(zstd.decompress(raw, zstd_dict=dictionary) if dictionary else zstd.decompress(raw))
-        fonts = sarc_members(arc)
+        fonts = sarc_members(arc); original = bytes(arc)
         if MEMBER not in fonts: continue
-        lo, hi = fonts[MEMBER]; arc[lo:hi] = glyphs.apply_xbox(bytes(arc[lo:hi]))
+        lo, hi = fonts[MEMBER]; font = glyphs.apply_xbox(bytes(arc[lo:hi]), svg_dir=root / 'assets/xbox-prompts')
+        arc = glyphs.sarc_replace(arc, MEMBER, font)
+        rebuilt = sarc_members(arc)
+        assert sorted(rebuilt) == sorted(fonts) and bytes(arc[slice(*rebuilt[MEMBER])]) == font
+        assert all(bytes(arc[slice(*rebuilt[n])]) == bytes(original[slice(*fonts[n])]) for n in fonts if n != MEMBER)
+        grown[path[:-3]] = (len(original), len(arc))
         data = zstd.compress(bytes(arc), level=19, zstd_dict=dictionary) if dictionary else zstd.compress(bytes(arc), level=19)
         assert (zstd.decompress(data, zstd_dict=dictionary) if dictionary else zstd.decompress(data)) == bytes(arc)
         target = out_dir / path; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)
         lines.append('\t'.join([path, str(len(data)), hashlib.sha256(data).hexdigest(), hashlib.sha256(raw).hexdigest()]))
         print(json.dumps(dict(status='pass', path=path, member=MEMBER, glyphs=args.glyphs, size=len(data))))
+    # The game allocates each file's buffer from the resource size table (System/Resource/ResourceSizeTable.*.rsizetable,
+    # "RESTBL": CRC-32 of the path without .zs -> size, then names that clash): a font archive that grew does not load
+    # (2026-10-19: a null resource at main+0xc609f4 before the first frame). Each grown archive's entry grows by as much.
+    import zlib
+    table_path = next(p for p in sorted(files) if p.startswith('System/Resource/ResourceSizeTable.') and p.endswith('.rsizetable.zs'))
+    with (root / f'extracted/{version}/romfs/romfs.bin').open('rb') as image:
+        f = files[table_path]; image.seek(f['offset']); raw = image.read(f['size']); assert len(raw) == f['size']
+    info = zstd.get_frame_info(raw); dictionary = dictionaries.get(info.dictionary_id)
+    table = bytearray(zstd.decompress(raw, zstd_dict=dictionary) if dictionary else zstd.decompress(raw))
+    assert table[:6] == b'RESTBL'
+    _, name_size, ncrc, nname = struct.unpack_from('<IIII', table, 6)
+    entries = {struct.unpack_from('<I', table, 22 + 8 * i)[0]: 22 + 8 * i + 4 for i in range(ncrc)}
+    names = {bytes(table[o:o + name_size]).split(b'\0')[0].decode(): o + name_size
+             for o in (22 + 8 * ncrc + i * (name_size + 4) for i in range(nname))}
+    for path, (shipped, new) in grown.items():
+        at = names.get(path) or entries[zlib.crc32(path.encode())]
+        old = struct.unpack_from('<I', table, at)[0]; assert old >= shipped, (path, old, shipped)
+        struct.pack_into('<I', table, at, old + new - shipped)
+    data = zstd.compress(bytes(table), level=19, zstd_dict=dictionary) if dictionary else zstd.compress(bytes(table), level=19)
+    target = out_dir / table_path; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)
+    lines.append('\t'.join([table_path, str(len(data)), hashlib.sha256(data).hexdigest(), hashlib.sha256(raw).hexdigest()]))
+    print(json.dumps(dict(status='pass', path=table_path, grown={p: n - o for p, (o, n) in grown.items()}, size=len(data))))
 (out_dir / 'manifest.tsv').write_text('# path\tsize\tsha256\toriginal_sha256 (generated by scripts/make_romfs_patches.py)\n' + '\n'.join(lines) + '\n')
