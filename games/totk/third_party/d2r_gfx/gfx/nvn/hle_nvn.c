@@ -355,6 +355,21 @@ NVN(nvnTextureInitialize, NVNboolean, NVNtexture *t, const NVNtextureBuilder *b)
     }
     memset(o, 0, sizeof *o);
     o->magic = MAGIC('T', 'E', 'X', 0); o->d = s->d; o->pool = s->pool; o->off = s->off;
+    {   /* TOTK_DEPTH_TEX_LOG=1 (diagnostic): depth textures of 512 and more, with the game's callers (main offsets, by
+           walking the frame-pointer chain from here into the guest code) */
+        static int on = -1; if (on < 0) on = getenv("TOTK_DEPTH_TEX_LOG") != NULL;
+        if (on && s->d.format >= 0x32 && s->d.format <= 0x36 && s->d.width >= 512) {
+            extern uint8_t *runtime_module_base(const char *name);
+            uintptr_t base = (uintptr_t)runtime_module_base("main"), *fp = __builtin_frame_address(0); char chain[512]; int n = 0;
+            for (int i = 0; i < 14 && fp && !((uintptr_t)fp & 7); i++) {
+                uintptr_t ra = fp[1];
+                if (ra >= base && ra < base + 0x5000000 && n < (int)sizeof chain - 16) n += snprintf(chain + n, sizeof chain - n, " %#lx", (unsigned long)(ra - base));
+                uintptr_t *next = (uintptr_t *)fp[0]; if (next <= fp) break; fp = next;
+            }
+            chain[n] = 0;
+            LOG("[depth-tex] %ux%ux%u fmt %#x target %d levels %u; main callers:%s", s->d.width, s->d.height, s->d.depth, s->d.format, s->d.target, s->d.levels, chain);
+        }
+    }
     o->has_layout = s->has_layout; memcpy(o->layout, s->layout, 8);
     nvn_tex_layout(&o->d, &o->L);
     o->mem = s->pool && s->pool->mem ? s->pool->mem + s->off : NULL;
