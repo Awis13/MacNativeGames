@@ -124,7 +124,11 @@ static void apply_settings(NSUserDefaults *d) {
     put("TOTK_FULLSCREEN", v[C_DISPLAY] == 0 ? "1" : "0");
     static const char *outputs[] = {"0", "2560x1440", "3440x1440"};
     put("TOTK_OUTPUT_RES", outputs[v[C_OUTPUT]]);
-    if (v[C_OUTPUT] == 2) put("TOTK_ASPECT", "3440x1440");   // a true 21:9 canvas: the camera's aspect follows it (runtime/aspect_patch.h)
+    if (v[C_OUTPUT] == 2) {   // a true 21:9 canvas: the camera's aspect follows it (runtime/aspect_patch.h) and the UI layouts
+        put("TOTK_ASPECT", "3440x1440");   // are laid out for it (scripts/make_romfs_patches.py --aspect), not squeezed at draw time
+        put("TOTK_ROMFS_PATCHES", "extracted/" TOTK_GAME_DIR "/romfs-patches-3440x1440");
+        put("TOTK_UI_SQUEEZE", "0");
+    }
     /* The 3D size follows the canvas's shape: the same 900 / 1080 / 1440 lines, 21:9 wide on the ultrawide canvas. */
     static const char *scenes[] = {"0", "1920x1080", "2560x1440"}, *wide_scenes[] = {"2150x900", "2580x1080", "3440x1440"};
     put("TOTK_RENDER_RES", (v[C_OUTPUT] == 2 ? wide_scenes : scenes)[v[C_SCENE]]);
