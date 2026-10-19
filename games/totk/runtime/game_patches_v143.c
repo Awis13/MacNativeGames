@@ -104,6 +104,23 @@ static void patch_realtime(Module *m){
     frame_interval_data=(_Atomic uint32_t *)(void *)(m->base+data+8);frame_step_store(1.0f/60.0f);
     fprintf(stderr,"[totk] 1.4.3 real-time frame step: 7 guarded sites, producer veneer +%#llx; original half-step selector and ratio/inverse/seconds/FPS calculations retained\n",(unsigned long long)stub);
 }
+/* TOTK_DYNRES=0 (the launcher's fixed 3D resolution): the scene always renders at its full size. The renderer's update
+ * (main+0x581960) takes this frame's share of the scene size from the dynamic resolution controller (main+0x584300,
+ * its float in w0) or, while flags 0x30 of +0xca4 are set, a fixed 0.5 / 0.75; either is multiplied by the scene width
+ * (+0xcc4) into +0xccc. Both become 1.0:
+ *   main+0x581a0c  fmov s0, w0             -> fmov s0, #1.0   (the controller's share)
+ *   main+0x5821f8  fcsel s0, s1, s0, eq    -> fmov s0, #1.0   (the fixed 0.5 / 0.75) */
+static void patch_dynres(Module *m){
+    const char *e=getenv("TOTK_DYNRES");if(!e||strcmp(e,"0"))return;
+#if TARGET_OS_IPHONE
+    return;
+#else
+    const Patch sites[]={{0x581a0c,0x1e270000,0x1e2e1000},{0x5821f8,0x1e200c20,0x1e2e1000}};
+    for(unsigned i=0;i<2;i++){uint32_t word;memcpy(&word,m->base+sites[i].off,4);if(word!=sites[i].original)runtime_fail("1.4.3 dynamic resolution original instruction mismatch");}
+    for(unsigned i=0;i<2;i++)memcpy(m->base+sites[i].off,&sites[i].replacement,4);
+    fprintf(stderr,"[totk] 1.4.3 dynamic resolution off: the scene always renders at its full size (main+0x581a0c, main+0x5821f8)\n");
+#endif
+}
 static void patch_output_res(Module *m);
 static void patch_render_res(Module *m);
 void runtime_game_patches(Module *m) {
@@ -111,6 +128,7 @@ void runtime_game_patches(Module *m) {
     patch_realtime(m);
     patch_output_res(m);
     patch_render_res(m);
+    patch_dynres(m);
     { static const uint64_t sites[] = {0x628c74, 0xb43460, 0x1ff04f4, 0x253fbb0};   /* camera update and setup, viewport x2 */
       aspect_install(m, "1.4.3", sites, 4, ((m->text_end + 15) & ~15ULL) + 48,   /* after the two veneers above */
                      (m->file_size + 0x3fff) & ~0x3fffULL); }

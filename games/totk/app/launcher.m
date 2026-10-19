@@ -93,7 +93,7 @@ static BOOL make_dir(NSString *path) {
    "Show this window at every launch" was turned off. Test runs (TOTK_SLOT_OWNER other than user, or TOTK_LAUNCHER=0)
    skip it, and a variable that is already set in the environment always wins over the window's choice. */
 typedef struct { NSString *key, *title; NSArray<NSString *> *labels; NSInteger fallback; NSString *help; } Choice;
-enum { C_DISPLAY, C_OUTPUT, C_SCENE, C_UPSCALE, C_INTERP, C_FPS, C_PAD, NCHOICES };
+enum { C_DISPLAY, C_OUTPUT, C_SCENE, C_UPSCALE, C_ANISO, C_INTERP, C_FPS, C_PAD, NCHOICES };
 static Choice choices[NCHOICES];
 static void choices_init(void) {
     choices[C_DISPLAY] = (Choice){@"display", @"Display", @[@"Full screen", @"Window"], 0,
@@ -104,6 +104,8 @@ static void choices_init(void) {
         @"How many lines the 3D world is rendered with before upscaling (1600 × 900 is the Switch\u2019s docked size; on the ultrawide canvas the width follows 21:9). Higher is sharper and needs more GPU time."};
     choices[C_UPSCALE] = (Choice){@"upscale", @"Upscaling", @[@"MetalFX", @"Built-in (FSR 1)"], 0,
         @"How the 3D scene is scaled up to the chosen resolution and to the screen."};
+    choices[C_ANISO] = (Choice){@"aniso", @"Texture filtering", @[@"Game default", @"4x anisotropic", @"8x anisotropic", @"16x anisotropic"], 3,
+        @"Sharper ground, roads and walls seen at a shallow angle. Almost free on a Mac GPU."};
     choices[C_INTERP] = (Choice){@"interp", @"Frame generation", @[@"Off", @"30 + 30", @"Half the refresh rate", @"Unlimited"], 3,
         @"MetalFX frame interpolation: a generated frame between every two game frames. Key 2 cycles it while playing."};
     choices[C_FPS] = (Choice){@"fps", @"Frame rate", @[@"Up to 60 FPS", @"Original 30 FPS"], 0,
@@ -111,7 +113,7 @@ static void choices_init(void) {
     choices[C_PAD] = (Choice){@"pad", @"Controller", @[@"Switch layout (by position)", @"As labeled on the controller"], 0,
         @"Switch layout: the right face button is A and the bottom one is B, as the on-screen prompts show."};
 }
-static NSString *const kShowFps = @"showOverlay", *const kShowWindow = @"showLauncher";
+static NSString *const kShowFps = @"showOverlay", *const kShowWindow = @"showLauncher", *const kDynres = @"fixedResolution";
 
 static void put(const char *name, const char *value) { if (value) setenv(name, value, 0); }
 static void apply_settings(NSUserDefaults *d) {
@@ -134,6 +136,9 @@ static void apply_settings(NSUserDefaults *d) {
     put("TOTK_RENDER_RES", (v[C_OUTPUT] == 2 ? wide_scenes : scenes)[v[C_SCENE]]);
     put("TOTK_MFX_UPSCALE", v[C_UPSCALE] == 0 ? "1" : "0");
     put("TOTK_MFX_OUTPUT", v[C_UPSCALE] == 0 ? "1" : "0");
+    static const char *aniso[] = {"0", "4", "8", "16"};
+    put("TOTK_ANISO", aniso[v[C_ANISO]]);
+    put("TOTK_DYNRES", [d objectForKey:kDynres] == nil || [d boolForKey:kDynres] ? "0" : "1");
     static const char *interp[] = {"0", "interp30", "interp", "interpmax"};
     put("TOTK_MFX", interp[v[C_INTERP]]);
     put("TOTK_FPS60", v[C_FPS] == 0 ? "1" : "0");
@@ -145,7 +150,7 @@ static void apply_settings(NSUserDefaults *d) {
 @interface TOTKLauncherWindow : NSObject <NSWindowDelegate>
 @property(strong) NSWindow *window;
 @property(strong) NSMutableArray<NSPopUpButton *> *popups;
-@property(strong) NSButton *overlay, *showAgain;
+@property(strong) NSButton *overlay, *showAgain, *dynres;
 @end
 @implementation TOTKLauncherWindow
 static NSTextField *label(NSString *text, CGFloat size, NSFontWeight weight, NSColor *color) {
@@ -188,6 +193,10 @@ static NSTextField *label(NSString *text, CGFloat size, NSFontWeight weight, NSC
         [self.popups addObject:p];
         [rows addObject:@[label([choices[i].title stringByAppendingString:@":"], 13, NSFontWeightRegular, NSColor.labelColor), p]];
     }
+    self.dynres = [NSButton checkboxWithTitle:@"Keep the 3D resolution fixed" target:nil action:nil];
+    self.dynres.state = [d objectForKey:kDynres] == nil || [d boolForKey:kDynres] ? NSControlStateValueOn : NSControlStateValueOff;
+    self.dynres.toolTip = @"The Switch lowers the 3D resolution in busy scenes; on a Mac it can stay at full size all the time.";
+    [rows addObject:@[label(@"Sharpness:", 13, NSFontWeightRegular, NSColor.labelColor), self.dynres]];
     self.overlay = [NSButton checkboxWithTitle:@"Show FPS counter and shortcut panel" target:nil action:nil];
     self.overlay.state = [d boolForKey:kShowFps] ? NSControlStateValueOn : NSControlStateValueOff;
     [rows addObject:@[label(@"On screen:", 13, NSFontWeightRegular, NSColor.labelColor), self.overlay]];
@@ -233,6 +242,7 @@ static NSTextField *label(NSString *text, CGFloat size, NSFontWeight weight, NSC
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
     for (int i = 0; i < NCHOICES; i++) [d setInteger:self.popups[i].indexOfSelectedItem forKey:choices[i].key];
     [d setBool:self.overlay.state == NSControlStateValueOn forKey:kShowFps];
+    [d setBool:self.dynres.state == NSControlStateValueOn forKey:kDynres];
     [d setBool:self.showAgain.state == NSControlStateValueOn forKey:kShowWindow];
     [d synchronize];
     [NSApp stopModalWithCode:NSModalResponseOK];
