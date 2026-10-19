@@ -5322,10 +5322,21 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
     /* TOTK_ANISO=<2..16> (the launcher's texture filtering): at least that much anisotropy for the game's ordinary
        textures, the linearly filtered, mipmapped ones (ground, walls, foliage seen at a grazing angle); point-sampled
        lookups, unmipmapped targets and shadow-compare samplers keep the game's own setting. */
+    {   /* diagnostic: what the game asks for (with TOTK_ANISO; 2026-10-19: 1x for all, 53 of the first 64 linear + mipmapped) */
+        static unsigned n, by_aniso[17], by_kind[4];
+        if (getenv("TOTK_ANISO")) {
+            by_aniso[d.maxAnisotropy]++;
+            by_kind[(d.minFilter == MTLSamplerMinMagFilterLinear) * 2 + (d.mipFilter != MTLSamplerMipFilterNotMipmapped)]++;
+            if (++n == 16 || n == 64 || n == 128 || n == 256) MLOG("samplers (%u): game anisotropy 1x %u / 2x %u / 4x %u / 8x %u / 16x %u; min nearest+no mips %u, nearest+mips %u, linear+no mips %u, linear+mips %u",
+                                 n, by_aniso[1], by_aniso[2], by_aniso[4], by_aniso[8], by_aniso[16], by_kind[0], by_kind[1], by_kind[2], by_kind[3]);
+        }
+    }
     static int aniso = -1;
     if (aniso < 0) { const char *e = getenv("TOTK_ANISO"); aniso = e ? atoi(e) : 0; if (aniso < 0 || aniso > 16) aniso = 0; }
     if (aniso > 1 && !p.cmp_mode && d.minFilter == MTLSamplerMinMagFilterLinear && d.magFilter == MTLSamplerMinMagFilterLinear &&
-        d.mipFilter != MTLSamplerMipFilterNotMipmapped && d.maxAnisotropy < (NSUInteger)aniso) d.maxAnisotropy = (NSUInteger)aniso;
+        d.mipFilter != MTLSamplerMipFilterNotMipmapped && d.maxAnisotropy < (NSUInteger)aniso) {
+        d.maxAnisotropy = (NSUInteger)aniso;
+    }
     if (p.cmp_mode) d.compareFunction = (MTLCompareFunction)(p.cmp_func - 1);
     d.borderColor = p.border[3] > 0.5f ? (p.border[0] > 0.5f ? MTLSamplerBorderColorOpaqueWhite : MTLSamplerBorderColorOpaqueBlack) : MTLSamplerBorderColorTransparentBlack;
     if (p.reduction > 2) die("sampler reduction filter %u unsupported", p.reduction);
