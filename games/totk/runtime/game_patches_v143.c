@@ -148,6 +148,8 @@ static int output_full_at_start;
 static unsigned output_w,output_h;
 static _Atomic(uint8_t *) output_page;
 static uint64_t pack_size(unsigned w,unsigned h){return (uint64_t)h<<32|w;}
+/* The smaller size key 3 switches to: 1080 lines at the canvas's own aspect (1920x1080 for 16:9, 2580x1080 for 3440x1440). */
+static uint64_t small_size(void){unsigned w=(unsigned)lround(1080.0*output_w/output_h/2)*2;return pack_size(w<1920?1920:w,1080);}
 uint64_t runtime_output_size_current(void){
     uint8_t *page=atomic_load(&output_page);
     return page?atomic_load((_Atomic uint64_t *)(void *)(page+32)):pack_size(1920,1080);
@@ -178,10 +180,27 @@ int runtime_output_res(unsigned *w,unsigned *h){
     }
     if(on){*w=cw;*h=ch;}return on;
 }
+/* The canvas-sized and the scene-sized render targets share DynamicTextureAllocatorMem (113664 KiB at a 1080p canvas
+ * and the 1600x900 scene). Each grows the heap by its own pixel ratio above the shipped size, a bigger scene with a 1.6
+ * margin: measured 2026-10-19, a 3440x1440 canvas with a 2580x1080 scene crashed in the allocator (main+0x1c2d20) at
+ * +258 MiB and loaded at +400 MiB. The HeapDef overlay (scripts/make_output_res_overlay.py --scene) uses the same
+ * formula. Mac only: iOS keeps the game's own heaps. */
+static int render_res(unsigned *w,unsigned *h);
+int runtime_render_res(unsigned *w,unsigned *h){
+#if TARGET_OS_IPHONE
+    (void)w;(void)h;return 0;
+#else
+    return !getenv("TOTK_EXPORT_IOS")&&render_res(w,h);
+#endif
+}
 uint64_t runtime_output_res_extra_bytes(void){
-    unsigned w,h;if(!runtime_output_res(&w,&h))return 0;
-    double ratio=(double)w*h/(1920.0*1080.0);if(ratio<=1)return 0;
-    uint64_t kib=(uint64_t)ceil(113664.0*ratio/1024.0)*1024-113664;return kib<<10;
+    unsigned w,h,sw,sh;double grow=0;
+    if(runtime_output_res(&w,&h)&&(double)w*h>1920.0*1080.0)grow+=(double)w*h/(1920.0*1080.0)-1;
+    int scene=runtime_render_res(&sw,&sh)&&(double)sw*sh>1600.0*900.0;
+    if(scene)grow+=((double)sw*sh/(1600.0*900.0)-1);
+    if(grow<=0)return 0;
+    if(scene)grow*=1.6;
+    uint64_t kib=(uint64_t)ceil(113664.0*(1+grow)/1024.0)*1024-113664;return kib<<10;
 }
 static void patch_output_res(Module *m){
     unsigned w,h;if(!runtime_output_res(&w,&h))return;
@@ -220,7 +239,7 @@ static void patch_output_res(Module *m){
     for(unsigned i=0;i<3;i++)memcpy(m->base+guards[i].off,words+i,4);
  #endif
     uint8_t *page=m->base+data;output_w=w;output_h=h;
-    atomic_store((_Atomic uint64_t *)(void *)(page+32),output_full_at_start?pack_size(w,h):pack_size(1920,1080));
+    atomic_store((_Atomic uint64_t *)(void *)(page+32),output_full_at_start?pack_size(w,h):small_size());
     atomic_store((_Atomic uint64_t *)(void *)(page+40),0);
     atomic_store(&output_page,page);   /* Publish initialized state to the HUD on the main thread. */
     fprintf(stderr,"[totk] 1.4.3 output: %ux%u swapchain; starts %s, key 3 cycles MetalFX / native / off; display-config veneer +%#llx\n",w,h,output_full_at_start?"at requested resolution":"at 1920x1080",(unsigned long long)stub);
@@ -289,10 +308,10 @@ int runtime_output_res_toggle(void){
     if(!output_page)return 0;
     _Atomic uint64_t *size=(_Atomic uint64_t *)(void *)(output_page+32);
     int full=atomic_load(size)!=pack_size(output_w,output_h);
-    atomic_store(size,full?pack_size(output_w,output_h):pack_size(1920,1080));
+    atomic_store(size,full?pack_size(output_w,output_h):small_size());
     uint64_t config=atomic_load((_Atomic uint64_t *)(void *)(output_page+40));
     if(config){__atomic_fetch_or((uint32_t *)(uintptr_t)(config+8),1u<<21,__ATOMIC_SEQ_CST);runtime_oe_push_message(30);}
-    fprintf(stderr,"[totk] 1.4.3 output requested %ux%u (display config %s)\n",full?output_w:1920,full?output_h:1080,config?"ready":"not published yet");
+    uint64_t now=atomic_load(size);fprintf(stderr,"[totk] 1.4.3 output requested %ux%u (display config %s)\n",(unsigned)now,(unsigned)(now>>32),config?"ready":"not published yet");
     return 1;
 }
 int runtime_output_mode_cycle(void){
