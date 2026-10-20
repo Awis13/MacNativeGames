@@ -203,8 +203,10 @@ int runtime_output_res(unsigned *w,unsigned *h){
 /* The canvas-sized and the scene-sized render targets share DynamicTextureAllocatorMem (113664 KiB at a 1080p canvas
  * and the 1600x900 scene). Each grows the heap by its own pixel ratio above the shipped size, a bigger scene with a 1.6
  * margin: measured 2026-10-19, a 3440x1440 canvas with a 2580x1080 scene crashed in the allocator (main+0x1c2d20) at
- * +258 MiB and loaded at +400 MiB. The HeapDef overlay (scripts/make_output_res_overlay.py --scene) uses the same
- * formula. Mac only: iOS keeps the game's own heaps. */
+ * +258 MiB and loaded at +400 MiB. That was before render_res_publish divided out the game's own canvas scaling (the
+ * scene was then about 4620x1935), so for the scene asked for the heaps are now larger than needed: safe, not tight.
+ * The HeapDef overlay (scripts/make_output_res_overlay.py --scene) uses the same formula. Mac only: iOS keeps the
+ * game's own heaps. */
 static int render_res(unsigned *w,unsigned *h);
 int runtime_render_res(unsigned *w,unsigned *h){
 #if TARGET_OS_IPHONE
@@ -340,9 +342,10 @@ int runtime_output_res_toggle(void){
     _Atomic uint64_t *size=(_Atomic uint64_t *)(void *)(output_page+32);
     int full=atomic_load(size)!=pack_size(output_w,output_h);
     atomic_store(size,full?pack_size(output_w,output_h):small_size());
+    uint64_t now=atomic_load(size);render_res_publish((unsigned)now);   /* the scene size first: the game rebuilds when told */
     uint64_t config=atomic_load((_Atomic uint64_t *)(void *)(output_page+40));
     if(config){__atomic_fetch_or((uint32_t *)(uintptr_t)(config+8),1u<<21,__ATOMIC_SEQ_CST);runtime_oe_push_message(30);}
-    uint64_t now=atomic_load(size);render_res_publish((unsigned)now);fprintf(stderr,"[totk] 1.4.3 output requested %ux%u (display config %s)\n",(unsigned)now,(unsigned)(now>>32),config?"ready":"not published yet");
+    fprintf(stderr,"[totk] 1.4.3 output requested %ux%u (display config %s)\n",(unsigned)now,(unsigned)(now>>32),config?"ready":"not published yet");
     return 1;
 }
 int runtime_output_mode_cycle(void){
