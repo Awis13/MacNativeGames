@@ -45,7 +45,7 @@ static void keep_old(id obj) {   // released (and dropped from the residency set
         g.old[i] = g.old[--g.nold]; i--;
     }
     if (dropped) [g.rs commit];
-    if (g.nold < (int)(sizeof g.old / sizeof *g.old)) g.old[g.nold++] = (typeof(g.old[0])){obj, g.frame};
+    if (g.nold < (int)(sizeof g.old / sizeof *g.old)) g.old[g.nold++] = (__typeof__(g.old[0])){obj, g.frame};
 }
 
 static _Atomic int g_on = -1;
