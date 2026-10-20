@@ -233,7 +233,7 @@ static NSTextField *label(NSString *text, CGFloat size, NSFontWeight weight, NSC
     [grid columnAtIndex:0].xPlacement = NSGridCellPlacementTrailing;
     for (NSInteger r = 0; r < grid.numberOfRows; r++) [grid rowAtIndex:r].yPlacement = NSGridCellPlacementCenter;
 
-    NSTextField *keys = label(@"While playing:  1  on-screen info    2  frame generation    3  resolution    4  21:9 view", 11, NSFontWeightRegular, NSColor.tertiaryLabelColor);
+    NSTextField *keys = label(@"While playing:  1  on-screen info    2  frame generation    3  resolution    4  21:9 view    5  edge smoothing", 11, NSFontWeightRegular, NSColor.tertiaryLabelColor);
     self.showAgain = [NSButton checkboxWithTitle:@"Show this window at every launch" target:nil action:nil];
     self.showAgain.state = [d objectForKey:kShowWindow] == nil || [d boolForKey:kShowWindow] ? NSControlStateValueOn : NSControlStateValueOff;
     self.showAgain.toolTip = @"When it is off, hold Option while opening the game to see this window.";
