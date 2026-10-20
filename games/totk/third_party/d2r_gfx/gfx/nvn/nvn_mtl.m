@@ -9496,17 +9496,18 @@ static int mfxup_draw(NvProg *pr) {
     __unsafe_unretained NvShader *fs = pr->sh[1];
     if (!fs) return 0;
     /* TOTK_TAA: the compose shader's scene goes through the MetalFX temporal scaler (1:1) first; encode_args binds the
-       result. The spatial paths below then see the same sizes as before. */
+       result, or the spatial upscale below takes it as its input when the scene is smaller than the canvas. The docked
+       upscale (mfxup_dock) is a later draw of another shader and reads the composed picture: unaffected. */
+    id<MTLTexture> taa_out = nil;
     if (taa_enabled() && !strncmp(fs->key, "0ac9a54938974396", 16) && R.rt.n && R.rt.color[0]) {
         int tid = (int)(S.tex[1][0] & 0xfffff);
         id<MTLTexture> src = tid > 0 ? (__bridge id<MTLTexture>)tex_fast(tid) : nil;
         if (src) {
             rp_end(); blit_close(); rs_sync();
-            id<MTLTexture> out = taa_encode(g_cb, src);
-            if (out) {
+            taa_out = taa_encode(g_cb, src);
+            if (taa_out) {
                 static int added; if (!added && taa_residency()) { [g_q4 addResidencySet:taa_residency()]; added = 1; }
-                g_mfxup_src = src; g_mfxup_out = out; g_mfxup_sh = fs;
-                return 0;
+                g_mfxup_src = src; g_mfxup_out = taa_out; g_mfxup_sh = fs;
             }
         }
     }
@@ -9526,8 +9527,8 @@ static int mfxup_draw(NvProg *pr) {
     if (!src || !dst || src.width >= dst.width || src.height >= dst.height) return 0;
     rp_end(); blit_close(); rs_sync();
     pt_mark(g_cb, 'X', nil);   // TOTK_PASS_GPU: the MetalFX upscale as its own entry
-    id<MTLTexture> out = mfxup_encode(g_cb, src, dst.width, dst.height);
-    if (!out) return 0;
+    id<MTLTexture> out = mfxup_encode(g_cb, taa_out ? taa_out : src, dst.width, dst.height);
+    if (!out) return 0;   // the anti-aliased scene, if any, stays bound (g_mfxup_out)
     mfxup_queue_residency();
     g_mfxup_src = src; g_mfxup_out = out; g_mfxup_sh = fs; atomic_store(&g_mfxup_last, atomic_load(&g_cur_frame));
     static unsigned n; if (++n % 1800 == 1) { char b[200]; mfxup_stats(MFXUP_SCENE, b, sizeof b); MLOG("[mfx-up] 至帧 %llu：%s", (unsigned long long)atomic_load(&g_cur_frame), b); }
