@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <math.h>
 #include "runtime.h"
+#include "cloud_save.h"
 #import "touch_pad.h"
 
 int totk_host_main(int argc, char **argv);
@@ -37,6 +38,10 @@ void runtime_shortcut_help_toggle(void) {}
     [super viewDidAppear:animated];
     static BOOL started; if (started) return; started = YES;
     pthread_attr_t attr; pthread_attr_init(&attr); pthread_attr_setstacksize(&attr, 64u << 20);
+    /* The game's main thread records and submits every frame. Without a QoS class iOS ran it on an efficiency core after
+       the first minute (1.1-1.4 GHz instead of 3.7: about 21 ms per frame instead of 7, 20-30 fps); on the Mac it is the
+       app's main thread, which is user-interactive already. */
+    pthread_attr_set_qos_class_np(&attr, QOS_CLASS_USER_INTERACTIVE, 0);
     pthread_t thread; pthread_create(&thread, &attr, run_host, NULL);
     pthread_detach(thread); pthread_attr_destroy(&attr);
 }
@@ -80,6 +85,14 @@ void runtime_shortcut_help_toggle(void) {}
     host_argv[0] = strdup("TOTK"); host_argv[1] = strdup(res.fileSystemRepresentation); host_argv[2] = strdup("boot");
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     self.window.rootViewController = [TOTKGameController new]; [self.window makeKeyAndVisible]; return YES;
+}
+// Leaving the game for the home screen may be the end of the session: the last save goes to iCloud now (runtime/cloud_save.m).
+- (void)applicationDidEnterBackground:(UIApplication *)application {
+    __block UIBackgroundTaskIdentifier task = [application beginBackgroundTaskWithExpirationHandler:^{ [application endBackgroundTask:task]; task = UIBackgroundTaskInvalid; }];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        runtime_cloud_save_flush(20000);
+        dispatch_async(dispatch_get_main_queue(), ^{ if (task != UIBackgroundTaskInvalid) [application endBackgroundTask:task]; task = UIBackgroundTaskInvalid; });
+    });
 }
 @end
 

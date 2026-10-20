@@ -389,6 +389,10 @@ int main(int argc, char **argv) {
         setenv("TOTK_GPU_BUDGET_MB", "7000", 1);
         setenv("TOTK_SLOT_OWNER", "user", 0);
         setenv("TOTK_SLOT_PURPOSE", "player", 0);
+        /* Saves shared with the iPad build through its iCloud container (runtime/cloud_save.m), when one is named:
+           defaults write org.macnativegames.totk cloudContainer iCloud.<its bundle id> */
+        NSString *container = [NSUserDefaults.standardUserDefaults stringForKey:@"cloudContainer"];
+        if (container.length) setenv("TOTK_CLOUD_CONTAINER", container.UTF8String, 0);
         NSString *contrib = env_or("TOTK_SHADER_CONTRIB", [data stringByAppendingPathComponent:@"shader-list-contribution.txt"]);
         setenv("TOTK_SHADER_CONTRIB", contrib.fileSystemRepresentation, 1);
         contrib_reminder(contrib);

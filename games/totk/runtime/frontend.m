@@ -6,6 +6,7 @@
 #include <stdatomic.h>
 #include <math.h>
 #include "runtime.h"
+#include "cloud_save.h"
 #include "game_version.h"
 #include "totk_ui_lang.h"
 #include "../third_party/d2r_gfx/gfx/nvn/totk_mfx_mode.h"
@@ -177,13 +178,14 @@ static void front_sync_drawable(void){
 -(void)windowDidBecomeKey:(NSNotification *)n{(void)n;atomic_store(&focused,1);runtime_oe_push_message(15);fprintf(stderr,"[totk] window gained focus\n");}
 -(void)windowDidResignKey:(NSNotification *)n{(void)n;atomic_store(&focused,0);runtime_input_clear();runtime_oe_push_message(15);fprintf(stderr,"[totk] window lost focus\n");}
 /* The process ends with the window. Save writes go straight to the files (runtime/fs_host.c), so a close in the middle of a
-   save waits (up to 15 s, the window already gone) until the game has written and committed it (runtime_fs_save_busy). */
+   save waits (up to 15 s, the window already gone) until the game has written and committed it (runtime_fs_save_busy).
+   Then the last save goes to iCloud (up to 10 s more, runtime/cloud_save.m). */
 -(void)windowWillClose:(NSNotification *)n{(void)n;
- if(!runtime_fs_save_busy()){fprintf(stderr,"[totk] window closed; graceful guest shutdown pending\n");_exit(0);}
+ if(!runtime_fs_save_busy()){fprintf(stderr,"[totk] window closed; graceful guest shutdown pending\n");runtime_cloud_save_flush(10000);_exit(0);}
  fprintf(stderr,"[totk] window closed while the game is saving: quitting when the save is done\n");
  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
   uint64_t t0=runtime_now_ns();while(runtime_fs_save_busy()&&runtime_now_ns()-t0<15000000000ull)usleep(20000);
-  fprintf(stderr,"[totk] save %s after %.2f s; quitting\n",runtime_fs_save_busy()?"still in progress (gave up)":"done",(runtime_now_ns()-t0)/1e9);_exit(0);});
+  fprintf(stderr,"[totk] save %s after %.2f s; quitting\n",runtime_fs_save_busy()?"still in progress (gave up)":"done",(runtime_now_ns()-t0)/1e9);runtime_cloud_save_flush(10000);_exit(0);});
 }
 -(void)windowDidResize:(NSNotification *)n{(void)n;front_sync_drawable();}
 /* Whether any part of the window can be seen (TOTK, 2026-10-16 night): macOS stops the display link's callbacks for a
