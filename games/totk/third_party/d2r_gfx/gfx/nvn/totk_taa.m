@@ -5,7 +5,7 @@
 // MFXUP_SCENE does with the spatial scaler).
 //  - Jitter: every frame the geometry drawn into the G-buffer depth has its viewport moved by a sub-pixel offset
 //    (Halton 2, 3; no shader changes; full-screen triangles and quads stay put). MetalFX gets the same offset.
-//  - Key 5 turns it on and off while playing (runtime/input.c); the launcher starts it off.
+//  - Key 5 turns it on and off while playing (runtime/input.c); TOTK_TAA=1 starts it on.
 //  - Motion vectors: from the camera only, as for frame interpolation (totk_mfx.m): the G-buffer depth reprojected with
 //    this and the previous frame's view-projection. What moves on its own (Link, enemies) gets the camera's motion;
 //    MetalFX rejects what does not match, at the cost of less smoothing there.
@@ -31,8 +31,8 @@ static struct {
     id<MTLTexture> out, mv;
     id<MTLComputePipelineState> mv_ps; id<MTL4ArgumentTable> args[TAA_SLOTS]; id<MTLBuffer> par[TAA_SLOTS]; int slot;
     __unsafe_unretained id<MTLTexture> depth;   // this frame's G-buffer depth (the game's texture, alive for the frame)
-    double cam[84], prev[84]; int cam_ok, prev_ok, jit_pass, failed, npass, maxpass;
-    unsigned jit_i; double jx, jy, sign_x, sign_y;
+    double cam[84], prev[84]; int cam_ok, prev_ok, jit_pass, failed;
+    unsigned jit_i; double jx, jy;
     __unsafe_unretained id<MTLTexture> last_src; uint64_t frame, encoded_frame;
     uint64_t done, resets, missing;
     struct { id obj; uint64_t frame; } old[TAA_OLD * 3]; int nold;
@@ -53,8 +53,6 @@ int taa_enabled(void) {
     int on = atomic_load_explicit(&g_on, memory_order_relaxed);
     if (on < 0) {
         const char *e = getenv("TOTK_TAA"); on = e && strcmp(e, "0");
-        const char *sx = getenv("TOTK_TAA_JSX"), *sy = getenv("TOTK_TAA_JSY");   // diagnostic: the jitter sign MetalFX gets
-        g.sign_x = sx ? atof(sx) : 1; g.sign_y = sy ? atof(sy) : 1;
         atomic_store(&g_on, on);
         TLOG("MetalFX temporal anti-aliasing (TOTK_TAA, key 5): %s", on ? "on" : "off");
     }
@@ -63,7 +61,7 @@ int taa_enabled(void) {
 /* Key 5: on / off while playing. Off takes effect at once; on starts a fresh history. */
 void taa_toggle(void) {
     int on = !taa_enabled();
-    g.prev_ok = 0; g.depth = nil; g.cam_ok = 0; g.jit_pass = 0; g.npass = 0;   // from the next frame's G-buffer pass on
+    g.prev_ok = 0; g.depth = nil; g.cam_ok = 0; g.jit_pass = 0;   // from the next frame's G-buffer pass on
     atomic_store(&g_on, on);
     TLOG("key 5: temporal anti-aliasing %s", on ? "on" : "off");
 }
@@ -74,10 +72,9 @@ int taa_pass(MTL4RenderPassDescriptor *pd) {
     if (!g.depth && dt && c0 && dt.pixelFormat == MTLPixelFormatDepth32Float && dt.textureType == MTLTextureType2D &&
         dt.width == c0.width && dt.height == c0.height && dt.width >= 320) {
         int nc = 0; for (int i = 0; i < 8; i++) nc += pd.colorAttachments[i].texture != nil;
-        if (nc >= 3) { g.depth = dt; g.jit_pass = 1; g.npass = 1; return 2; }
+        if (nc >= 3) { g.depth = dt; g.jit_pass = 1; return 2; }
     }
     g.jit_pass = dt && dt == g.depth;
-    g.npass += g.jit_pass;
     return g.jit_pass;
 }
 int taa_jittered(void) { return g.jit_pass; }
@@ -211,7 +208,7 @@ id<MTLTexture> taa_encode(id<MTL4CommandBuffer> cb, id<MTLTexture> src) {
     [e endEncoding];
     g.sc.colorTexture = src; g.sc.depthTexture = depth; g.sc.motionTexture = g.mv; g.sc.outputTexture = g.out;
     g.sc.inputContentWidth = src.width; g.sc.inputContentHeight = src.height;
-    g.sc.jitterOffsetX = (float)(g.sign_x * g.jx); g.sc.jitterOffsetY = (float)(g.sign_y * g.jy);
+    g.sc.jitterOffsetX = (float)g.jx; g.sc.jitterOffsetY = (float)g.jy;
     g.sc.motionVectorScaleX = 1; g.sc.motionVectorScaleY = 1; g.sc.depthReversed = NO; g.sc.reset = reset; g.sc.fence = g.fence;
     [g.sc encodeToCommandBuffer:cb];
     g.sc.colorTexture = nil; g.sc.depthTexture = nil; g.sc.motionTexture = nil; g.sc.outputTexture = nil;
@@ -221,8 +218,7 @@ id<MTLTexture> taa_encode(id<MTL4CommandBuffer> cb, id<MTLTexture> src) {
     return g.out;
 }
 void taa_frame_end(void) {
-    if (g.npass > g.maxpass) { g.maxpass = g.npass; TLOG("passes drawing into the G-buffer depth: %d", g.npass); }
-    g.frame++; g.depth = nil; g.cam_ok = 0; g.jit_pass = 0; g.npass = 0;
+    g.frame++; g.depth = nil; g.cam_ok = 0; g.jit_pass = 0;
     g.jit_i = g.jit_i % 16 + 1;   // Halton 2, 3 over 16 frames, centred on the pixel
     g.jx = halton(g.jit_i, 2) - 0.5; g.jy = halton(g.jit_i, 3) - 0.5;
     if (g.frame % 1800 == 0 && taa_enabled()) { char b[200]; taa_stats(b, sizeof b); TLOG("%s", b); }
