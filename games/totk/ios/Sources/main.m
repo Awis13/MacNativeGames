@@ -38,10 +38,6 @@ void runtime_shortcut_help_toggle(void) {}
     [super viewDidAppear:animated];
     static BOOL started; if (started) return; started = YES;
     pthread_attr_t attr; pthread_attr_init(&attr); pthread_attr_setstacksize(&attr, 64u << 20);
-    /* The game's main thread records and submits every frame. Without a QoS class iOS ran it on an efficiency core after
-       the first minute (1.1-1.4 GHz instead of 3.7: about 21 ms per frame instead of 7, 20-30 fps); on the Mac it is the
-       app's main thread, which is user-interactive already. */
-    pthread_attr_set_qos_class_np(&attr, QOS_CLASS_USER_INTERACTIVE, 0);
     pthread_t thread; pthread_create(&thread, &attr, run_host, NULL);
     pthread_detach(thread); pthread_attr_destroy(&attr);
 }
