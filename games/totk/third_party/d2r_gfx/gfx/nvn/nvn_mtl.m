@@ -5370,7 +5370,7 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
        textures, the linearly filtered, mipmapped and repeating ones (ground, walls, foliage seen at a grazing angle).
        Clamped samplers keep the game's setting: some read data rather than colour, and anisotropy there left bright
        green pixels along Link's outline in the inventory (150-240 per frame at 3440x1440, 8-17 without). Point-sampled
-       lookups, unmipmapped targets and shadow-compare samplers keep it too. */
+       lookups, unmipmapped targets, shadow-compare and min / max samplers keep it too; values above 16 mean 16. */
     {   /* diagnostic: what the game asks for (with TOTK_ANISO; 2026-10-19: 1x for all, 53 of the first 64 linear + mipmapped) */
         static unsigned n, by_aniso[17], by_kind[4];
         if (getenv("TOTK_ANISO")) {
@@ -5381,10 +5381,10 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
         }
     }
     static int aniso = -1;
-    if (aniso < 0) { const char *e = getenv("TOTK_ANISO"); aniso = e ? atoi(e) : 0; if (aniso < 0 || aniso > 16) aniso = 0; }
+    if (aniso < 0) { const char *e = getenv("TOTK_ANISO"); aniso = e ? atoi(e) : 0; aniso = aniso < 0 ? 0 : aniso > 16 ? 16 : aniso; }
     BOOL repeats = (d.sAddressMode == MTLSamplerAddressModeRepeat || d.sAddressMode == MTLSamplerAddressModeMirrorRepeat) &&
                    (d.tAddressMode == MTLSamplerAddressModeRepeat || d.tAddressMode == MTLSamplerAddressModeMirrorRepeat);
-    if (aniso > 1 && !p.cmp_mode && d.minFilter == MTLSamplerMinMagFilterLinear && d.magFilter == MTLSamplerMinMagFilterLinear &&
+    if (aniso > 1 && !p.cmp_mode && !p.reduction && d.minFilter == MTLSamplerMinMagFilterLinear && d.magFilter == MTLSamplerMinMagFilterLinear &&
         d.mipFilter != MTLSamplerMipFilterNotMipmapped && d.maxAnisotropy < (NSUInteger)aniso && repeats) {
         d.maxAnisotropy = (NSUInteger)aniso;
     }
