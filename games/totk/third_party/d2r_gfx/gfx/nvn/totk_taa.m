@@ -19,7 +19,11 @@
 #include "totk_taa.h"
 
 #define TLOG(...) do { fprintf(stderr, "[dm] [nvn-mtl] [taa] " __VA_ARGS__); fputc('\n', stderr); } while (0)
-#define TAA_SLOTS 3
+/* Per-frame parameter buffers and argument tables: the replay can encode several frames before the GPU runs the first
+   one, and a slot rewritten too early gives MetalFX the wrong camera for that frame (the history then lands beside
+   itself; it showed as a purple shimmer on hazy rocks that faded whenever a screenshot waited for the GPU). */
+#define TAA_SLOTS 16
+#define TAA_OLD 8   // replaced scalers and textures are kept this many frames (Metal 4 command buffers do not retain)
 
 static struct {
     id<MTLDevice> dev; id<MTL4Compiler> comp; id<MTLResidencySet> rs; id<MTLFence> fence;
@@ -31,7 +35,18 @@ static struct {
     unsigned jit_i; double jx, jy, sign_x, sign_y;
     __unsafe_unretained id<MTLTexture> last_src; uint64_t frame, encoded_frame;
     uint64_t done, resets, missing;
+    struct { id obj; uint64_t frame; } old[TAA_OLD * 3]; int nold;
 } g;
+static void keep_old(id obj) {   // released (and dropped from the residency set) TAA_OLD frames later, when the GPU is done with it
+    if (!obj) return;
+    int dropped = 0;
+    for (int i = 0; i < g.nold; i++) if (g.frame - g.old[i].frame >= TAA_OLD) {
+        if ([g.old[i].obj conformsToProtocol:@protocol(MTLAllocation)]) { [g.rs removeAllocation:g.old[i].obj]; dropped = 1; }
+        g.old[i] = g.old[--g.nold]; i--;
+    }
+    if (dropped) [g.rs commit];
+    if (g.nold < (int)(sizeof g.old / sizeof *g.old)) g.old[g.nold++] = (typeof(g.old[0])){obj, g.frame};
+}
 
 static _Atomic int g_on = -1;
 int taa_enabled(void) {
@@ -132,11 +147,15 @@ static int ensure_scaler(id<MTLTexture> src) {
     d.colorTextureFormat = src.pixelFormat; d.outputTextureFormat = of;
     d.depthTextureFormat = MTLPixelFormatDepth32Float; d.motionTextureFormat = MTLPixelFormatRG16Float;
     d.inputWidth = d.outputWidth = src.width; d.inputHeight = d.outputHeight = src.height;
-    d.autoExposureEnabled = YES;
+    /* No auto exposure: MetalFX's own estimate jumped now and then (after a few minutes of play, worst at dusk and at
+       night), and the game's tone mapping turned that into a different tint of the whole frame for a moment: the sky
+       went from (28, 98, 122) to (46, 83, 76) between two captures and hazy rocks seemed to glow. With the exposure
+       left at 1 the same five minutes stayed smooth and flickered less than without anti-aliasing. */
+    d.autoExposureEnabled = NO;
     id<MTL4FXTemporalScaler> sc = [d newTemporalScalerWithDevice:g.dev compiler:g.comp];
     if (!sc) { g.failed = 1; TLOG("temporal scaler %lux%lu (format %lu) not created", (unsigned long)src.width, (unsigned long)src.height, (unsigned long)src.pixelFormat); return 0; }
-    if (g.out) [g.rs removeAllocation:g.out];
-    if (g.mv) [g.rs removeAllocation:g.mv];
+    keep_old(g.out); keep_old(g.mv);
+    keep_old(g.sc);
     g.out = mk(of, src.width, src.height, sc.outputTextureUsage | MTLTextureUsageShaderRead);
     g.mv = mk(MTLPixelFormatRG16Float, src.width, src.height, sc.motionTextureUsage | MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead);
     [g.rs commit];
