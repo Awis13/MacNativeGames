@@ -23,7 +23,7 @@
    one, and a slot rewritten too early gives MetalFX the wrong camera for that frame (the history then lands beside
    itself; it showed as a purple shimmer on hazy rocks that faded whenever a screenshot waited for the GPU). */
 #define TAA_SLOTS 16
-#define TAA_OLD 8   // replaced scalers and textures are kept this many frames (Metal 4 command buffers do not retain)
+#define TAA_OLD TAA_SLOTS   // replaced scalers and textures are kept as long (Metal 4 command buffers do not retain)
 
 static struct {
     id<MTLDevice> dev; id<MTL4Compiler> comp; id<MTLResidencySet> rs; id<MTLFence> fence;
@@ -32,6 +32,8 @@ static struct {
     id<MTLComputePipelineState> mv_ps; id<MTL4ArgumentTable> args[TAA_SLOTS]; id<MTLBuffer> par[TAA_SLOTS]; int slot;
     __unsafe_unretained id<MTLTexture> depth;   // this frame's G-buffer depth (the game's texture, alive for the frame)
     double cam[84], prev[84]; int cam_ok, prev_ok, jit_pass, failed;
+    int active, jit_ok, jit_used;   // active: latched from key 5 at frame end; jit_ok: this frame may jitter (see taa_frame_end)
+    uint64_t retry_at;              // a scaler that could not be built is tried again from this frame on
     unsigned jit_i; double jx, jy;
     __unsafe_unretained id<MTLTexture> last_src; uint64_t frame, encoded_frame;
     uint64_t done, resets, missing;
@@ -58,27 +60,30 @@ int taa_enabled(void) {
     }
     return on;
 }
-/* Key 5: on / off while playing. Off takes effect at once; on starts a fresh history. */
+/* Key 5: on / off while playing (the input thread). The replay takes it at the next frame end, so a frame is either
+   jittered in every pass on the G-buffer depth or in none (foliage drawn twice with an equal depth test needs both alike). */
 void taa_toggle(void) {
     int on = !taa_enabled();
-    g.prev_ok = 0; g.depth = nil; g.cam_ok = 0; g.jit_pass = 0;   // from the next frame's G-buffer pass on
     atomic_store(&g_on, on);
     TLOG("key 5: temporal anti-aliasing %s", on ? "on" : "off");
 }
+int taa_active(void) { return g.active; }
+int taa_ready(void) { return g.active && !g.failed && g.frame >= g.retry_at && g.depth && g.cam_ok; }
 static double halton(unsigned i, unsigned b) { double f = 1, r = 0; while (i) { f /= b; r += f * (i % b); i /= b; } return r; }
 
 int taa_pass(MTL4RenderPassDescriptor *pd) {
+    if (!g.active) return 0;
     id<MTLTexture> c0 = pd.colorAttachments[0].texture, dt = pd.depthAttachment.texture;
     if (!g.depth && dt && c0 && dt.pixelFormat == MTLPixelFormatDepth32Float && dt.textureType == MTLTextureType2D &&
         dt.width == c0.width && dt.height == c0.height && dt.width >= 320) {
         int nc = 0; for (int i = 0; i < 8; i++) nc += pd.colorAttachments[i].texture != nil;
-        if (nc >= 3) { g.depth = dt; g.jit_pass = 1; return 2; }
+        if (nc >= 3) { g.depth = dt; g.jit_pass = g.jit_ok; return 2; }
     }
-    g.jit_pass = dt && dt == g.depth;
+    g.jit_pass = g.jit_ok && dt && dt == g.depth;
     return g.jit_pass;
 }
 int taa_jittered(void) { return g.jit_pass; }
-void taa_jitter(double *x, double *y) { *x = g.jx; *y = g.jy; }
+void taa_jitter(double *x, double *y) { *x = g.jx; *y = g.jy; g.jit_used = 1; }
 void taa_note_camera(const float *c, int n) {
     if (n < 84) return;
     for (int i = 0; i < 84; i++) g.cam[i] = c[i];
@@ -150,13 +155,13 @@ static int ensure_scaler(id<MTLTexture> src) {
        left at 1 the same five minutes stayed smooth and flickered less than without anti-aliasing. */
     d.autoExposureEnabled = NO;
     id<MTL4FXTemporalScaler> sc = [d newTemporalScalerWithDevice:g.dev compiler:g.comp];
-    if (!sc) { g.failed = 1; TLOG("temporal scaler %lux%lu (format %lu) not created", (unsigned long)src.width, (unsigned long)src.height, (unsigned long)src.pixelFormat); return 0; }
+    if (!sc) { g.retry_at = g.frame + 300; TLOG("temporal scaler %lux%lu (format %lu) not created; trying again in 300 frames", (unsigned long)src.width, (unsigned long)src.height, (unsigned long)src.pixelFormat); return 0; }
     keep_old(g.out); keep_old(g.mv);
     keep_old(g.sc);
     g.out = mk(of, src.width, src.height, sc.outputTextureUsage | MTLTextureUsageShaderRead);
     g.mv = mk(MTLPixelFormatRG16Float, src.width, src.height, sc.motionTextureUsage | MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead);
     [g.rs commit];
-    if (!g.out || !g.mv) { g.failed = 1; return 0; }
+    if (!g.out || !g.mv) { g.sc = nil; g.retry_at = g.frame + 300; TLOG("textures for %lux%lu not created; trying again in 300 frames", (unsigned long)src.width, (unsigned long)src.height); return 0; }
     g.sc = sc; g.w = src.width; g.h = src.height; g.fmt = src.pixelFormat; g.prev_ok = 0;
     TLOG("temporal scaler %lux%lu, scene format %lu, output RGBA16Float, 1:1 with jitter", (unsigned long)g.w, (unsigned long)g.h, (unsigned long)g.fmt);
     return 1;
@@ -185,12 +190,12 @@ static int camera_cut(void) {
 }
 
 id<MTLTexture> taa_encode(id<MTL4CommandBuffer> cb, id<MTLTexture> src) {
-    if (!cb || !src || src.textureType != MTLTextureType2D) return nil;
+    if (!g.active || g.frame < g.retry_at || !cb || !src || src.textureType != MTLTextureType2D) return nil;
     if (g.encoded_frame == g.frame + 1 && src == g.last_src) return g.out;   // the compose shader again in the same frame
     id<MTLTexture> depth = g.depth;
     if (!depth || !g.cam_ok || depth.width != src.width || depth.height != src.height) { g.missing++; g.prev_ok = 0; return nil; }
     if (!setup(src.device) || !ensure_scaler(src)) return nil;
-    int reset = !g.prev_ok || camera_cut();
+    int reset = !g.prev_ok || g.encoded_frame != g.frame || camera_cut();   // also after a frame without anti-aliasing (menus, loading)
     double vc[16], vp[16], ic[16], m[16];
     for (int i = 0; i < 16; i++) { vc[i] = g.cam[12 + i]; vp[i] = reset ? g.cam[12 + i] : g.prev[12 + i]; }
     if (!inv4(vc, ic)) { g.missing++; g.prev_ok = 0; return nil; }
@@ -208,7 +213,7 @@ id<MTLTexture> taa_encode(id<MTL4CommandBuffer> cb, id<MTLTexture> src) {
     [e endEncoding];
     g.sc.colorTexture = src; g.sc.depthTexture = depth; g.sc.motionTexture = g.mv; g.sc.outputTexture = g.out;
     g.sc.inputContentWidth = src.width; g.sc.inputContentHeight = src.height;
-    g.sc.jitterOffsetX = (float)g.jx; g.sc.jitterOffsetY = (float)g.jy;
+    g.sc.jitterOffsetX = g.jit_used ? (float)g.jx : 0; g.sc.jitterOffsetY = g.jit_used ? (float)g.jy : 0;   // what the geometry got
     g.sc.motionVectorScaleX = 1; g.sc.motionVectorScaleY = 1; g.sc.depthReversed = NO; g.sc.reset = reset; g.sc.fence = g.fence;
     [g.sc encodeToCommandBuffer:cb];
     g.sc.colorTexture = nil; g.sc.depthTexture = nil; g.sc.motionTexture = nil; g.sc.outputTexture = nil;
@@ -218,7 +223,11 @@ id<MTLTexture> taa_encode(id<MTL4CommandBuffer> cb, id<MTLTexture> src) {
     return g.out;
 }
 void taa_frame_end(void) {
-    g.frame++; g.depth = nil; g.cam_ok = 0; g.jit_pass = 0;
+    int want = taa_enabled(); if (want != g.active) { g.active = want; g.prev_ok = 0; }
+    g.frame++; g.depth = nil; g.cam_ok = 0; g.jit_pass = 0; g.jit_used = 0;
+    /* The geometry is jittered only after a frame MetalFX took: when it cannot run (no Metal 4 temporal scaler, a scaler
+       not built yet, no camera), a moved picture with nothing to smooth it would shake. */
+    g.jit_ok = g.active && !g.failed && g.frame >= g.retry_at && g.encoded_frame == g.frame;
     g.jit_i = g.jit_i % 16 + 1;   // Halton 2, 3 over 16 frames, centred on the pixel
     g.jx = halton(g.jit_i, 2) - 0.5; g.jy = halton(g.jit_i, 3) - 0.5;
     if (g.frame % 1800 == 0 && taa_enabled()) { char b[200]; taa_stats(b, sizeof b); TLOG("%s", b); }

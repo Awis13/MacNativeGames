@@ -4427,7 +4427,7 @@ static id<MTL4RenderCommandEncoder> rp_begin_ex(int clear_only) {
     { void td_note(id pd, NSUInteger nc); td_note(pd, (NSUInteger)R.rt.n);
       void ts_note(id pd, NSUInteger nc); ts_note(pd, (NSUInteger)R.rt.n); }
     ser_gate();
-    if (taa_enabled() && taa_pass(pd) == 2) g_mfx.want_cam = 1;   // TOTK_TAA: the G-buffer pass found; its first draw gives the camera
+    if (taa_pass(pd) == 2) g_mfx.want_cam = 1;   // TOTK_TAA: the G-buffer pass found; its first draw gives the camera
     if (mfx_enabled()) mfx_pass_setup(pd);   // TOTK: MetalFX scene / UI attachments, G-buffer depth
     else if (uw_ratio()) canvas_learn(pd);   // key 4: the canvas the UI is squeezed in
     g_enc = enc_r_begin(pd);
@@ -8968,7 +8968,7 @@ static void mfx_take_camera(void) {
     if (u->addr && u->size == 2368) {
         pend_materialize(u->addr, (uint8_t *)cam, sizeof cam, 0);   // the bytes this draw sees: memory plus pending inline updates
         mfx_note_camera(cam, 84);
-        if (taa_enabled()) taa_note_camera(cam, 84);
+        if (taa_active()) taa_note_camera(cam, 84);
         /* TOTK_MFX_CAMLOG=<first>-<last frame>: every captured camera (diagnostic) */
         static long c0 = -2, c1; if (c0 == -2) { const char *e = getenv("TOTK_MFX_CAMLOG"); c0 = e ? atol(e) : -1; c1 = e && strchr(e, '-') ? atol(strchr(e, '-') + 1) : c0; }
         long f = (long)atomic_load(&g_cur_frame);
@@ -9499,7 +9499,7 @@ static int mfxup_draw(NvProg *pr) {
        result, or the spatial upscale below takes it as its input when the scene is smaller than the canvas. The docked
        upscale (mfxup_dock) is a later draw of another shader and reads the composed picture: unaffected. */
     id<MTLTexture> taa_out = nil;
-    if (taa_enabled() && !strncmp(fs->key, "0ac9a54938974396", 16) && R.rt.n && R.rt.color[0]) {
+    if (taa_ready() && !strncmp(fs->key, "0ac9a54938974396", 16) && R.rt.n && R.rt.color[0]) {
         int tid = (int)(S.tex[1][0] & 0xfffff);
         id<MTLTexture> src = tid > 0 ? (__bridge id<MTLTexture>)tex_fast(tid) : nil;
         if (src) {

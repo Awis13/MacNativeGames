@@ -2,7 +2,9 @@
 #pragma once
 #import <Metal/Metal.h>
 
-int taa_enabled(void);
+int taa_enabled(void);                         // key 5 state (what the panel shows)
+int taa_active(void);                          // the replay's state, latched from it at frame end
+int taa_ready(void);                           // this frame has the depth and camera to anti-alias (cheap check before taa_encode)
 void taa_toggle(void);                         // key 5
 /* Per render pass (before its encoder opens): finds this frame's G-buffer pass (D32F depth of the colour size, three or
    more colour attachments) and returns 1 for the passes that draw into its depth, which get this frame's jitter. */
