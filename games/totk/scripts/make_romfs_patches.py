@@ -35,12 +35,12 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output-dir', type=Path, default=root / 'extracted/v0/romfs-patches')
 parser.add_argument('--capture-frame', type=float, default=0.0)
 parser.add_argument('--version', choices=('v0','v112','v121','v143'), default='v0')
-parser.add_argument('--aspect', help='<width>x<height> of a canvas wider than 16:9: also lay the UI out for it (scripts/ultrawide_layout.py); default output romfs-patches-<width>x<height>')
+parser.add_argument('--aspect', type=str.lower, help='<width>x<height> of a canvas wider than 16:9: also lay the UI out for it (scripts/ultrawide_layout.py); default output romfs-patches-<width>x<height> (-center with --hud center)')
 parser.add_argument('--hud', choices=('corner', 'center'), default='corner', help='with --aspect: the HUD in the screen corners or in the middle 16:9')
 parser.add_argument('--glyphs', choices=('xbox',), help='face-button labels of the prompts for a controller mapped by position (scripts/button_glyphs.py); default output romfs-patches[-<aspect>]-xbox')
 args = parser.parse_args()
 version = args.version
-if args.output_dir == root / 'extracted/v0/romfs-patches': args.output_dir = root / (f'extracted/{version}/romfs-patches' + (f'-{args.aspect}' if args.aspect else '') + (f'-{args.glyphs}' if args.glyphs else ''))
+if args.output_dir == root / 'extracted/v0/romfs-patches': args.output_dir = root / (f'extracted/{version}/romfs-patches' + (f'-{args.aspect}' + ('-center' if args.hud == 'center' else '') if args.aspect else '') + (f'-{args.glyphs}' if args.glyphs else ''))
 assert 0 <= args.capture_frame <= 0.5
 manifest = json.loads((root / f'extracted/{version}/romfs/index.json').read_text())
 assert manifest['status'] == 'pass'

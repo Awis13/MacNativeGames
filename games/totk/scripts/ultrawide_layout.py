@@ -6,7 +6,7 @@ out 34% too wide. Here each layout's root pane is narrowed to 16:9 (scale x = 16
 must cover the whole screen are widened back, and the HUD's parts move out to the screen's corners. The pane list and
 the distances are the ones the community TOTK-Ultrawide mod for emulators found for 1.0.0 .. 1.2.1; this is an
 independent implementation (none of the mod's code), checked against 1.4.3's Common.Product.140: every pane is found by
-name and every animation key holds the value the edit expects before it is written.
+name and every pane field and animation key holds the value the edit expects before it is written.
 
 The runtime's own UI squeeze (nvn_mtl.m, TOTK_UI_SQUEEZE) must be off with these layouts, or the UI is narrowed twice.
 """
@@ -18,7 +18,7 @@ FIELD = {'x': 44, 'y': 48, 'scale_x': 68, 'scale_y': 72}
 
 # Full-screen layouts whose root pane stays as wide as the canvas.
 KEEP_ROOT = {'AppMenuBG_00', 'PauseMenuBG_00', 'ShopMenuParasailBG_00', 'ShortCutBG_00', 'TitleMenuBG_00', 'EventFade_00',
-             'EventFadeWipe_00', 'CameraShutter_00', 'PaAppPictureBookDetail_00', 'AppMenuOverlay_00', 'Pa_Map_00'}
+             'EventFadeWipe_00', 'CameraShutter_00', 'PaAppPictureBookDetail_00', 'AppMenuOverlay_00'}
 
 def edits(k, hud_corner):
     """(layout, pane, field, value) for the aspect: k = 16/9 over the aspect (the root's scale), w = how far a 1920-wide
@@ -40,8 +40,8 @@ def edits(k, hud_corner):
         ('CameraSystemWindow_00', 'T_Text_00', 'scale_x', k),
         ('ChallengeLog_00', 'C_CaptureUp_00', 'x', OFF), ('ChallengeLog_00', 'C_CaptureUp_01', 'x', OFF),
         ('GameOver_00', 'P_BG_00', 'scale_x', wide),
-        ('LoadingFade_00', 'N_Base', 'scale_x', wide), ('LoadingFade_00', 'N_Logo', 'x', w),
-        ('LoadingFade_00', 'N_Status', 'x', w), ('LoadingFade_00', 'N_Tips', 'x', -w),
+        ('LoadingFade_00', 'N_Base_00', 'scale_x', wide), ('LoadingFade_00', 'N_Logo_00', 'x', w),
+        ('LoadingFade_00', 'N_Status_00', 'x', w), ('LoadingFade_00', 'N_Tips_00', 'x', -w),
         ('LoadingFade_00', 'P_BG_00', 'scale_x', wide), ('LoadingFade_00', 'P_SideBGDeco_00', 'scale_x', k),
         ('LoadingFade_00', 'Pa_IconPlayer_00', 'scale_x', k), ('LoadingFade_00', 'Pa_LargeDungeonMap_00', 'scale_x', k),
         ('LoadingFade_00', 'Pa_LargeDungeonMap_01', 'scale_x', k), ('LoadingFade_00', 'Pa_Map_00', 'scale_x', k),
@@ -59,7 +59,7 @@ def edits(k, hud_corner):
         out += [(layout, deco.format('L'), 'scale_x', k), (layout, deco.format('L'), 'x', -(675 + w) * k),
                 (layout, deco.format('R'), 'scale_x', k), (layout, deco.format('R'), 'x', (737 + w) * k)]
         if layout == 'PauseMenuOverlay_00':
-            out += [(layout, 'P_FooterBase', 'scale_x', wide), (layout, 'S_DecoScissor', 'scale_x', wide)]
+            out += [(layout, 'P_FooterBase_00', 'scale_x', wide), (layout, 'S_DecoScissor_00', 'scale_x', wide)]
         else:
             out += [(layout, 'A_Title_00', 'scale_x', k), (layout, 'N_Header_00', 'scale_x', wide),
                     (layout, 'N_SystemBG_00', 'scale_x', wide)]
@@ -102,33 +102,37 @@ def panes(blarc, lo, hi):
     assert pos <= hi
     return out
 
-def find_pane(found, name):
-    """The pane of that name, else the first pane in the file whose name starts with it (N_Logo -> N_Logo_00, before
-    the N_LogoGauge_* panes that follow it)."""
-    if name in found: return found[name]
-    starts = [n for n in found if n.startswith(name)]
-    assert starts, name
-    return min(found[n] for n in starts)
+def find_pane(found, layout, name):
+    """The pane of that exact name (a version that renamed it stops the script)."""
+    if name not in found: raise SystemExit(f'{layout}: no pane {name}')
+    return found[name]
 
 def apply(blarc, members, width, height, hud_corner=True):
     """Edits blarc (bytearray) in place for a width x height canvas. Returns the members it changed."""
     k = (16 / 9) / (width / height)
     assert k < 1, 'only for canvases wider than 16:9'
     changed, layouts = set(), {}
+    unknown = sorted(n for n in KEEP_ROOT if f'blyt/{n}.bflyt' not in members)
+    if unknown: raise SystemExit(f'KEEP_ROOT names no layout: {unknown}')
     def pane_offset(layout, pane):
         member = f'blyt/{layout}.bflyt'
         if member not in layouts: layouts[member] = panes(blarc, *members[member])
         changed.add(member)
-        return find_pane(layouts[member], pane)
+        return find_pane(layouts[member], layout, pane)
     for member in sorted(m for m in members if m.startswith('blyt/') and m.endswith('.bflyt')):
         if member[5:-6] in KEEP_ROOT: continue
         struct.pack_into('<f', blarc, pane_offset(member[5:-6], 'RootPane') + FIELD['scale_x'], k)
-    for layout, pane, field, value in edits(k, hud_corner):
-        struct.pack_into('<f', blarc, pane_offset(layout, pane) + FIELD[field], value)
+    # Every edit's value at k = 1 is the value the game ships (a scale of 1, the 16:9 position): checked before writing,
+    # so a version with other numbers stops here instead of getting wrong positions. OFF moves a pane away: not checked.
+    for (layout, pane, field, value), (_, _, _, shipped) in zip(edits(k, hud_corner), edits(1.0, hud_corner)):
+        at = pane_offset(layout, pane) + FIELD[field]
+        have = struct.unpack_from('<f', blarc, at)[0]
+        if value != 10000.0 and abs(have - shipped) > 1e-3: raise SystemExit(f'{layout} {pane} {field}: {have}, expected {shipped}')
+        struct.pack_into('<f', blarc, at, value)
     for anim, offset, shipped, value in anim_edits(k, hud_corner):
         member = f'anim/{anim}.bflan'; lo, hi = members[member]
-        assert offset + 4 <= hi - lo
+        if offset + 4 > hi - lo: raise SystemExit(f'{anim}: too short for +{offset}')
         have = struct.unpack_from('<f', blarc, lo + offset)[0]
-        assert abs(have - shipped) < 1e-4, (anim, offset, have, shipped)
+        if abs(have - shipped) >= 1e-4: raise SystemExit(f'{anim} +{offset}: {have}, expected {shipped}')
         struct.pack_into('<f', blarc, lo + offset, value); changed.add(member)
     return sorted(changed)
